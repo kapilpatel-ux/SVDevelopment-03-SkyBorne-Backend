@@ -32,9 +32,6 @@ export const CreateMeetingSchema = Yup.object({
     .min(30, "Duration must be at least 30 minutes")
     .max(480, "Duration cannot exceed 8 hours"),
   
-  autoRecording: Yup.boolean()
-    .required("Auto recording option is required"),
-  
   rotationEnabled: Yup.boolean(),
 
   startDate: Yup.string()

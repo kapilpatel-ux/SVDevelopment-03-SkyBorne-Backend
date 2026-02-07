@@ -16,6 +16,7 @@ const _countryRepository = new CountryRepository();
 
 export default class MeetingController {
   static async CreateMeeting(req: Request, res: Response) {
+    console.log("🚀 [CreateMeeting] Request received with body:", req.body); 
     try {
       const token = await getZoomAccessToken();
       const {
@@ -25,7 +26,10 @@ export default class MeetingController {
         liveTime,
         trainer,
         duration,
-        autoRecording = true,
+        autoRecording=true,
+        isRecurring,
+        recurringType,
+        recurringDays,
         rotationEnabled,
         startDate,
         localTime,
@@ -77,32 +81,68 @@ export default class MeetingController {
       // });
 
       // Build recurrence object
-      const recurrenceSettings: any = {
-        type: 2,
-        repeat_interval: 1,
-        weekly_days: zoomWeekDay,
-      };
+      // const recurrenceSettings: any = {
+      //   type: 2,
+      //   repeat_interval: 1,
+      //   weekly_days: zoomWeekDay,
+      // };
+      
+      let recurrenceSettings: any = {};
 
-      if (weeklyEndDate) {
-        const endDate = new Date(weeklyEndDate);
-        const endDateString = endDate.toISOString().split("T")[0];
-        recurrenceSettings.end_date_time = endDateString;
-      } else {
-        const defaultEndDate = new Date(startDateTime);
-        defaultEndDate.setFullYear(defaultEndDate.getFullYear() + 1);
-        const endDateString = defaultEndDate.toISOString().split("T")[0];
-        recurrenceSettings.end_date_time = endDateString;
+      if (isRecurring) {
+        if (recurringType === "weekly") {
+          recurrenceSettings = {
+            type: 2, // WEEKLY
+            repeat_interval: 1,
+            weekly_days: zoomWeekDay,
+          };
+        }
+
+        if (recurringType === "monthly") {
+          recurrenceSettings = {
+            type: 3, // MONTHLY
+            repeat_interval: 1,
+            monthly_day: startDateTime.getUTCDate(), // same date every month
+          };
+        }
+
+        if (recurringType === "custom") {
+          recurrenceSettings = {
+            type: 1, // DAILY
+            repeat_interval: Math.min(Math.max(recurringDays ?? 1, 1), 30),
+          };
+        }
+
+        // common end date
+        const endDate = weeklyEndDate
+          ? new Date(weeklyEndDate)
+          : new Date(new Date(startDateTime).setFullYear(startDateTime.getFullYear() + 1));
+
+        recurrenceSettings.end_date_time = endDate
+          .toISOString()
+          .split("T")[0];
       }
+
+      // if (weeklyEndDate) {
+      //   const endDate = new Date(weeklyEndDate);
+      //   const endDateString = endDate.toISOString().split("T")[0];
+      //   recurrenceSettings.end_date_time = endDateString;
+      // } else {
+      //   const defaultEndDate = new Date(startDateTime);
+      //   defaultEndDate.setFullYear(defaultEndDate.getFullYear() + 1);
+      //   const endDateString = defaultEndDate.toISOString().split("T")[0];
+      //   recurrenceSettings.end_date_time = endDateString;
+      // }
 
       const zoomResponse = await axios.post(
         "https://api.zoom.us/v2/users/me/meetings",
         {
           topic,
-          type: 8,
+          type: isRecurring ? 8 : 2,
           start_time: localTime,
           duration,
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          recurrence: recurrenceSettings,
+          ...(isRecurring && { recurrence: recurrenceSettings }),
           settings: {
             mute_upon_entry: true,
             allow_multiple_audio_unmute: false,
@@ -142,7 +182,15 @@ export default class MeetingController {
         duration,
         autoRecording,
         rotationEnabled: false,
-        isRecurring: true,
+        isRecurring: isRecurring,
+        recurringType: isRecurring ? recurringType : null,
+        recurringDays:
+          isRecurring && recurringType === "custom"
+            ? recurringDays
+            : null,
+        weeklyEndDate: isRecurring && weeklyEndDate
+          ? new Date(weeklyEndDate)
+          : null,
         isLive: true,
         startDate: new Date(startDate),
         localTime: new Date(localTime),
@@ -150,7 +198,6 @@ export default class MeetingController {
         startUrl: webStartUrl,
         recordingUrl: "",
         createdBy: adminId,
-        weeklyEndDate: weeklyEndDate ? new Date(weeklyEndDate) : null,
       });
 
       // console.log("✅ [CreateMeeting] Parent meeting saved to DB:", {
@@ -165,7 +212,7 @@ export default class MeetingController {
       // console.log("📦 [CreateMeeting] Storing recurring instances...");
       const storedInstances: any[] = [];
 
-      if (occurrences && occurrences.length > 0) {
+      if (isRecurring && occurrences && occurrences.length > 0) {
         for (const occurrence of occurrences) {
           try {
             const instanceRecord = await Meeting.create({
@@ -1333,25 +1380,16 @@ export default class MeetingController {
         liveTime,
         trainer,
         duration,
-        autoRecording,
+        autoRecording=true,
         rotationEnabled = false,
         startDate,
         localTime,
         regions,
+        isRecurring,
+        recurringType,
+        recurringDays,
+        weeklyEndDate,
       } = req.body;
-
-      // console.log("📋 [UpdateMeeting] Extracted parameters:", {
-      //   service,
-      //   title,
-      //   liveRegion,
-      //   liveTime,
-      //   trainer,
-      //   duration,
-      //   autoRecording,
-      //   rotationEnabled,
-      //   startDate,
-      //   localTime,
-      // });
 
       // Validate required fields
       if (
@@ -1398,6 +1436,11 @@ export default class MeetingController {
       meeting.startDate = new Date(startDate);
       meeting.localTime = new Date(localTime);
       meeting.regions = regions; // Update all regions
+
+      meeting.isRecurring = isRecurring ?? false;
+      meeting.recurringType = isRecurring ? recurringType : null;
+      meeting.recurringDays = isRecurring && recurringType === "custom" ? recurringDays : null;
+      meeting.weeklyEndDate = isRecurring && weeklyEndDate ? new Date(weeklyEndDate) : undefined;
 
       // Update Zoom meeting settings if needed
       try {

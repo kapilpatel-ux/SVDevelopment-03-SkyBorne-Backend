@@ -50,6 +50,12 @@ export interface IMeeting extends Document {
 
   status: "pending" | "completed" | "failed";
 
+  isRecurring?: boolean;
+  recurringType?: "weekly" | "monthly" | "custom";
+  recurringDays?: number;
+  weeklyEndDate?: Date;
+  parentMeetingId?: Types.ObjectId;
+
   createdBy: Types.ObjectId;
 }
 
@@ -163,6 +169,37 @@ const MeetingSchema = new Schema<IMeeting>(
     recordingUrl: {
       type: String,
       default: "",
+    },
+
+    isRecurring: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    recurringType: {
+      type: String,
+      enum: ["weekly", "monthly", "custom"],
+      default: null,
+    },
+
+    recurringDays: {
+      type: Number,
+      min: 1,
+      max: 30,
+      default: null,
+    },
+
+    weeklyEndDate: {
+      type: Date,
+      default: null,
+    },
+
+    parentMeetingId: {
+      type: Schema.Types.ObjectId,
+      ref: "Meeting",
+      default: null,
+      index: true,
     },
 
     createdBy: {
