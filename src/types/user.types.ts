@@ -17,6 +17,7 @@ export interface ISubscription {
   status: SubscriptionStatus;
   suspendedAt: Date | null;
   cancelledAt: Date | null;
+  expiryReminderSentFor?: Date | null;
 }
 
 export interface IUser {

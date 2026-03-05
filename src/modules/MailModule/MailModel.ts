@@ -6,6 +6,8 @@ export interface IMailLog extends Document {
   meetingTime: Date;
   sentAt: Date;
   totalUsers: number;
+  status: "success" | "failed";
+  failureReason?: string;
 }
 
 const MailLogSchema = new Schema<IMailLog>(
@@ -36,6 +38,19 @@ const MailLogSchema = new Schema<IMailLog>(
       required: true,
       min: 0,
       default: 0,
+    },
+    status: {
+      type: String,
+      enum: ["success", "failed"],
+      required: true,
+      default: "success",
+      index: true,
+    },
+    failureReason: {
+      type: String,
+      required: false,
+      trim: true,
+      default: null,
     },
   },
   { timestamps: true },

@@ -33,6 +33,8 @@ isRecurring: boolean;
 recurringCycle?: string;
 billingAttempt: number;
 verifiedAt?: Date;
+recurringFailureEmailSentAt?: Date | null;
+recurringFailureNotifiedInvoiceId?: string | null;
 createdAt: Date;
 updatedAt: Date;
 }
@@ -155,6 +157,16 @@ const PaymentSchema = new Schema<IPayment>(
   verifiedAt: {
     type: Date,
     sparse: true,
+  },
+  recurringFailureEmailSentAt: {
+    type: Date,
+    default: null,
+  },
+  recurringFailureNotifiedInvoiceId: {
+    type: String,
+    default: null,
+    sparse: true,
+    index: true,
   },
 },
 {

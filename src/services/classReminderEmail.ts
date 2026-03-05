@@ -345,6 +345,8 @@ classReminderEmailQueue.process(async (job: any) => {
       meetingTime: meetingStartDate,
       sentAt: new Date(),
       totalUsers: Array.isArray(userEmails) ? userEmails.length : 0,
+      status: "success",
+      failureReason: null,
     });
 
     console.log(
@@ -355,6 +357,34 @@ classReminderEmailQueue.process(async (job: any) => {
   } catch (err: any) {
     console.error(`❌ Email send failed for class reminder`);
     console.error("Error Message:", err.message);
+
+    try {
+      const fallbackMeetingDate = new Date(
+        job?.data?.classStartAt || job?.data?.startDate || Date.now(),
+      );
+
+      await MailLog.create({
+        meetingId: String(job?.data?.meetingId || "").trim() || undefined,
+        meetingTitle: String(job?.data?.meetingTitle || "Untitled Meeting"),
+        meetingTime: Number.isNaN(fallbackMeetingDate.getTime())
+          ? new Date()
+          : fallbackMeetingDate,
+        sentAt: new Date(),
+        totalUsers: Array.isArray(job?.data?.userEmails)
+          ? job.data.userEmails.length
+          : 0,
+        status: "failed",
+        failureReason:
+          err?.response?.body?.errors?.[0]?.message ||
+          err?.message ||
+          "Failed to send reminder mail",
+      });
+    } catch (logError: any) {
+      console.error(
+        "❌ Failed to store failed reminder mail log:",
+        logError?.message || logError,
+      );
+    }
 
     if (err.response?.body) {
       console.error(

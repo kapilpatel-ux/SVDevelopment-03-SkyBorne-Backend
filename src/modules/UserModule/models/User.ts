@@ -181,12 +181,18 @@ const userSchema = new Schema<IUser>(
           type: Date,
           required: false,
         },
+        expiryReminderSentFor: {
+          type: Date,
+          required: false,
+          default: null,
+        },
       },
       default: {
         startDate: null,
         endDate: null,
         status: "inactive",
         suspendedAt: null,
+        expiryReminderSentFor: null,
       },
     },
 

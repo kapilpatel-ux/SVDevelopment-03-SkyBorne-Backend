@@ -1,6 +1,7 @@
 import express from "express";
 import Stripe from "stripe";
 import Payment from "../models/Payment";
+import RecurringPaymentFailure from "../models/RecurringPaymentFailure";
 import User from "../../UserModule/models/User";
 import PaymentController from "./paymentController";
 
@@ -417,6 +418,8 @@ router.post(
         case "invoice.payment_failed": {
           const invoice = event.data.object as Stripe.Invoice;
           const hydratedInvoice = await hydrateInvoice(invoice);
+          const billingReason = hydratedInvoice.billing_reason || "";
+          const isRecurringCycle = billingReason === "subscription_cycle";
           const subscriptionId = getSubscriptionId(hydratedInvoice);
           const transactionId = await resolveInvoiceTransactionId(hydratedInvoice);
 
@@ -427,6 +430,11 @@ router.post(
             transactionId,
             billingReason: hydratedInvoice.billing_reason || null,
           });
+
+          if (!isRecurringCycle) {
+            console.log("ℹ️ Skipping non-recurring invoice.payment_failed");
+            break;
+          }
 
           if (!subscriptionId) {
             console.warn("⚠️ Missing subscriptionId in failed invoice");
@@ -449,6 +457,9 @@ router.post(
           payment.status = "FAILED";
           payment.transactionId = transactionId || payment.transactionId;
           payment.billingAttempt = (payment.billingAttempt || 0) + 1;
+          payment.invoiceId = hydratedInvoice.id || payment.invoiceId;
+          payment.recurringFailureNotifiedInvoiceId = null;
+          payment.recurringFailureEmailSentAt = null;
           payment.gatewayResponse = hydratedInvoice;
           await payment.save();
 
@@ -458,6 +469,38 @@ router.post(
             billingAttempt: payment.billingAttempt,
             subscriptionId: payment.subscriptionId,
           });
+
+          const failedUser =
+            (payment.userId ? await User.findById(payment.userId).select("email") : null) ||
+            (await User.findOne({ stripeSubscriptionId: subscriptionId }).select("email"));
+
+          if (failedUser?.email) {
+            const payload = {
+              userId: failedUser._id,
+              email: failedUser.email,
+              subscriptionId: subscriptionId || undefined,
+              invoiceId: hydratedInvoice.id || undefined,
+              failedAt: new Date(),
+            };
+
+            if (hydratedInvoice.id) {
+              await RecurringPaymentFailure.findOneAndUpdate(
+                { invoiceId: hydratedInvoice.id },
+                { $set: payload },
+                { upsert: true, new: true, setDefaultsOnInsert: true },
+              );
+            } else {
+              await RecurringPaymentFailure.create(payload);
+            }
+
+            console.log("📝 Recurring failure email stored:", {
+              userId: failedUser._id.toString(),
+              email: failedUser.email,
+              invoiceId: hydratedInvoice.id || null,
+            });
+          } else {
+            console.warn("⚠️ Failed recurring user email not found for storing");
+          }
 
           await User.findByIdAndUpdate(payment.userId, {
             "subscription.status": "suspended",

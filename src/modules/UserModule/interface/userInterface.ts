@@ -77,6 +77,7 @@ export interface IUser extends Document {
     status: "active" | "expired" | "inactive" | "suspended" | "cancelled";
     suspendedAt?: Date | null;
     cancelledAt?: Date | null;
+    expiryReminderSentFor?: Date | null;
   };
 
   // System

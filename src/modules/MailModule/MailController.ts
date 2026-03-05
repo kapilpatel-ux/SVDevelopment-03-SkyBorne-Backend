@@ -33,6 +33,7 @@ export default class MailController {
           meetingTime: log.meetingTime,
           sentAt: log.sentAt,
           totalUsers: log.totalUsers,
+          status: log.status || "success",
         })),
         pagination: {
           currentPage: page,

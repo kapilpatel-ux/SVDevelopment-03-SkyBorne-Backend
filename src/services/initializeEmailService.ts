@@ -1,5 +1,7 @@
 // src/services/email/initializeEmailServices.ts
 import { startClassReminderCron } from "../cron/ClassReminderCron";
+import { startSubscriptionExpiryReminderCron } from "../cron/SubscriptionExpiryReminderCron";
+import { startRecurringFailureSubscriptionInactiveCron } from "../cron/RecurringFailureSubscriptionInactiveCron";
 import "./classReminderEmail"; // Import to start processing the queue
 
 /**
@@ -12,6 +14,8 @@ export const initializeEmailServices = () => {
   try {
     // Start the class reminder cron job
     startClassReminderCron();
+    startSubscriptionExpiryReminderCron();
+    startRecurringFailureSubscriptionInactiveCron();
 
     console.log("✅ All email services initialized successfully");
   } catch (error) {
