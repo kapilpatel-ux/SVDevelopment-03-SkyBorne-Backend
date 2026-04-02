@@ -1,5 +1,4 @@
 import { Schema, model, Document, Types } from "mongoose";
-import autopopulate from "mongoose-autopopulate";
 import { boolean } from "yup";
 
 // -----------------------------
@@ -249,9 +248,6 @@ const MeetingSchema = new Schema<IPopulatedMeeting>(
 // Add index for efficient queries
 MeetingSchema.index({ recurringClass: 1, recurrenceType: 1 });
 MeetingSchema.index({ parentMeetingId: 1 });
-
-// Plugin
-MeetingSchema.plugin(autopopulate);
 
 // -----------------------------
 // Export Model

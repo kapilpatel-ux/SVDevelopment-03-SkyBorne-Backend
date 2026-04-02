@@ -5,6 +5,7 @@ import {
   ConflictError,
   InternalServerError,
   NotFoundError,
+  UnprocessableEntityError,
 } from "./../handlers/httpError.handler";
 import { Document } from "mongodb";
 import { Model, Error, FilterQuery } from "mongoose";
@@ -193,7 +194,9 @@ async getAll(payload: {
     }
 
     if (err.message.includes("validation failed")) {
-      throw new Error(err.message);
+      throw new UnprocessableEntityError("Validation failed", {
+        errors: [err.message],
+      });
     }
 
     logger.error(

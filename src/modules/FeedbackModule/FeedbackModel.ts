@@ -1,6 +1,5 @@
 // models/Feedback.ts
 import mongoose, { Schema, Document, Types } from "mongoose";
-import autopopulate from "mongoose-autopopulate";
 
 export interface IFeedback extends Document {
   userId: Types.ObjectId;
@@ -44,8 +43,6 @@ const FeedbackSchema: Schema<IFeedback> = new Schema(
     timestamps: true,
   }
 );
-
-FeedbackSchema.plugin(autopopulate);
 
 export const Feedback =
   mongoose.models.Feedback ||

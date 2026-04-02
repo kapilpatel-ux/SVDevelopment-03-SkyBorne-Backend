@@ -641,9 +641,20 @@ export default class PaymentController {
    */
   static async getPaymentStatus(req: Request, res: Response) {
     try {
-      const { orderRef } = req.params;
+      const identifier = String(req.params.orderRef ?? req.params.id ?? "").trim();
 
-      const payment = await Payment.findOne({ orderRef });
+      if (!identifier) {
+        return res.status(400).json({
+          success: false,
+          message: "Payment identifier is required",
+        });
+      }
+
+      const query = mongoose.Types.ObjectId.isValid(identifier)
+        ? { $or: [{ _id: identifier }, { orderRef: identifier }] }
+        : { orderRef: identifier };
+
+      const payment = await Payment.findOne(query);
 
       if (!payment) {
         return res.status(404).json({
@@ -654,6 +665,7 @@ export default class PaymentController {
 
       return res.status(200).json({
         success: true,
+        id: payment._id,
         status: payment.status,
         gateway: payment.gateway,
         orderRef: payment.orderRef,

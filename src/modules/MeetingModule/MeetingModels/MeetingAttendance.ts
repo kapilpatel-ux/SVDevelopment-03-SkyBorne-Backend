@@ -1,6 +1,5 @@
 import { Schema, model, Document, Types } from "mongoose";
 import { IMeeting } from "./Meeting";
-import autopopulate from "mongoose-autopopulate";
 
 export interface ISession {
   joinTime: Date;
@@ -141,8 +140,6 @@ const MeetingAttendanceSchema = new Schema<IMeetingAttendance>(
   { timestamps: true }
 );
 
-
-MeetingAttendanceSchema.plugin(autopopulate);
 
 export default model<IMeetingAttendance>(
   "MeetingAttendance",

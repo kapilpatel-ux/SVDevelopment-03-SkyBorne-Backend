@@ -38,6 +38,9 @@ const ServiceSchema = new Schema<IServiceDocument>(
   { timestamps: true }
 );
 
+ServiceSchema.index({ isActive: 1, order: 1 });
+ServiceSchema.index({ title: 1 });
+
 const ServiceModel = mongoose.model("Service", ServiceSchema);
 
 export default ServiceModel;

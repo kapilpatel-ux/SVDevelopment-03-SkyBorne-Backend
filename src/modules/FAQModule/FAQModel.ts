@@ -25,5 +25,7 @@ const faqSchema = new Schema<IFaq>(
   { timestamps: true }
 );
 
+faqSchema.index({ question: 1 });
+
 // 3️⃣ Export Model
 export default mongoose.model<IFaq>("Faq", faqSchema);

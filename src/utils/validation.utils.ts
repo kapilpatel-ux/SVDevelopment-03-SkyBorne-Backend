@@ -1,12 +1,14 @@
-import { Request, Response } from "express";
+import { NextFunction, Request, Response } from "express";
 import { ValidationError } from "yup";
 import { logger } from "./winston.utils";
+import { UnprocessableEntityError } from "../handlers/httpError.handler";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const validateData =
-  (schema: any) => async (req: Request, res: Response, next: () => void) => {
+  (schema: any) =>
+  async (req: Request, res: Response, next: NextFunction) => {
     try {
-      if (!schema) next();
+      if (!schema) return next();
       await schema.validate(
         {
           body: req.body,
@@ -26,14 +28,13 @@ const validateData =
         `
         );
 
-        return res
-          .status(500)
-          .json({
-            success: false,
-            message: `Validation Errors. ${err.errors[0]}`,
-            data: err.errors,
-          });
+        return next(
+          new UnprocessableEntityError("Validation failed", {
+            errors: err.errors,
+          })
+        );
       }
+      return next(err as Error);
     }
   };
 

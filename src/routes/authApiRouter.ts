@@ -10,6 +10,7 @@ import sendOtpValidation, {
   verifyOtpValidation,
 } from "../modules/AuthModule/requests/otpRequest";
 import { catchErrors } from "../handlers/routeError.handler";
+import { getEndpointRateLimiter } from "../utils/rateLimit.utils";
 
 const authApiRouter = express.Router();
 
@@ -66,7 +67,11 @@ const routes = [
 ];
 
 routes.map((route) => {
-  const middlewares = route?.middleware ?? [];
+  const rateLimiter = getEndpointRateLimiter(route.name, route.method);
+  const middlewares = [
+    ...(rateLimiter ? [rateLimiter] : []),
+    ...(route?.middleware ? [route.middleware] : []),
+  ];
 
   switch (route.method) {
     case "get":

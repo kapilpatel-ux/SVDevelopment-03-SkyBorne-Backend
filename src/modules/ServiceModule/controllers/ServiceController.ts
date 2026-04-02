@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import ServiceServices from "../services/ServiceServices";
+import { invalidateCacheByPrefix } from "../../../middlewares/cache.middleware";
 
 const serviceService = new ServiceServices();
 
@@ -26,13 +27,6 @@ export default class ServiceController {
   // GET ONLY ACTIVE SERVICES
   static async getActiveServices(req: Request, res: Response) {
     const services = await serviceService.getActiveServices();
-
-  res.set({
-    "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-    "Pragma": "no-cache",
-    "Expires": "0",
-    "Surrogate-Control": "no-store",
-  });
     return res.status(200).json({
       success: true,
       message: "Active services fetched successfully",
@@ -43,6 +37,7 @@ export default class ServiceController {
   // CREATE
   static async createService(req: Request, res: Response) {
     const service = await serviceService.createService(req.body);
+    await invalidateCacheByPrefix("services");
     return res.status(201).json({
       success: true,
       message: "Service created successfully",
@@ -54,6 +49,7 @@ export default class ServiceController {
   static async updateService(req: Request, res: Response) {
     const { serviceId } = req.params;
     const service = await serviceService.updateService(serviceId, req.body);
+    await invalidateCacheByPrefix("services");
 
     return res.status(200).json({
       success: true,
@@ -71,6 +67,7 @@ export default class ServiceController {
       serviceId,
       isActive
     );
+    await invalidateCacheByPrefix("services");
 
     return res.status(200).json({
       success: true,
@@ -83,6 +80,7 @@ export default class ServiceController {
   static async deleteService(req: Request, res: Response) {
     const { serviceId } = req.params;
     await serviceService.deleteService(serviceId);
+    await invalidateCacheByPrefix("services");
 
     return res.status(200).json({
       success: true,

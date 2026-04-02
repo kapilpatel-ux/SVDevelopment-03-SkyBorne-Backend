@@ -1,16 +1,27 @@
-import validateData from "../../../utils/validation.utils";
 import PaymentController from "../controllers/paymentController";
 import { paymentWebhookController } from "../controllers/paymentWebhookController";
 import { CreatePaymentOrderSchema } from "../requests/createPayment";
 import {
+  GetPaymentByIdSchema,
   GetPaymentStatusSchema,
-  GetVerifyStatusSchema,
 } from "../requests/getPaymentStatus";
 
 export const PaymentApiRoutes = [
   {
+    path: "/payments",
+    request: CreatePaymentOrderSchema,
+    action: PaymentController.createPaymentOrder,
+    method: "post",
+  },
+  {
+    path: "/payments/:id",
+    action: PaymentController.getPaymentStatus,
+    request: GetPaymentByIdSchema,
+    method: "get",
+  },
+  {
     path: "/payment/create-order",
-    request: null,
+    request: CreatePaymentOrderSchema,
     action: PaymentController.createPaymentOrder,
     method: "post",
   },
@@ -36,7 +47,7 @@ export const PaymentApiRoutes = [
   {
     path: "/payment/status/:orderRef",
     action: PaymentController.getPaymentStatus,
-    request: validateData(GetPaymentStatusSchema),
+    request: GetPaymentStatusSchema,
     method: "get",
   },
   {

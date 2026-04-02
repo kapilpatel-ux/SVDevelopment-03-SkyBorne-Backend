@@ -1,4 +1,7 @@
 import ServiceController from "../controllers/ServiceController";
+import { cacheResponse } from "../../../middlewares/cache.middleware";
+
+const serviceCache = cacheResponse({ keyPrefix: "services", ttlSeconds: 300 });
 
 export const ServiceRoute = [
     // UPDATE STATUS (isActive) - Must be before generic :serviceId routes
@@ -24,6 +27,7 @@ export const ServiceRoute = [
     request: null,
     action: ServiceController.getAllServices,
     method: "get",
+    cache: serviceCache,
   },
 
   // GET ONLY ACTIVE SERVICES (Public / Frontend)
@@ -32,6 +36,7 @@ export const ServiceRoute = [
     request: null,
     action: ServiceController.getActiveServices,
     method: "get",
+    cache: serviceCache,
   },
 
   // UPDATE SERVICE

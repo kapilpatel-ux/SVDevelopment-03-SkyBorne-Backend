@@ -82,6 +82,9 @@ const PlanSchema = new Schema<IPlanDocument>(
   { timestamps: true }
 );
 
+PlanSchema.index({ isActive: 1, order: 1 });
+PlanSchema.index({ price: 1 });
+
 const PlanModel = mongoose.model("Plan", PlanSchema);
 
 export default PlanModel;

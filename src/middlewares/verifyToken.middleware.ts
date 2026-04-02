@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import * as jwt from "jsonwebtoken";
 import { verifyToken } from "../config/jwt";
+import { UnauthorizedError } from "../handlers/httpError.handler";
 
 
 export interface AuthRequest extends Request {
@@ -17,10 +18,7 @@ export function verifyAccessToken(
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({
-        success: false,
-        message: "No token provided",
-      });
+      throw new UnauthorizedError("No token provided");
     }
 
     // 2️⃣ Extract token
@@ -33,11 +31,8 @@ export function verifyAccessToken(
     req.user = decoded;
 
     // 5️⃣ Continue
-    next();
+    return next();
   } catch (error) {
-    return res.status(401).json({
-      success: false,
-      message: "Invalid or expired token",
-    });
+    return next(new UnauthorizedError("Invalid or expired token"));
   }
 }

@@ -1,6 +1,5 @@
 import mongoose, { Schema, Types } from "mongoose";
 import { Document } from "mongoose";
-import autopopulate from "mongoose-autopopulate";
 
 export interface ICoach extends Document {
   name: string;
@@ -67,8 +66,6 @@ const CoachesSchema = new Schema<ICoach>(
   },
   { timestamps: true }
 );
-
-CoachesSchema.plugin(autopopulate);
 
 // Prevent model overwrite issue in Next.js (important!)
 export default mongoose.models.Coach ||

@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import PlanServices from "../services/PlanService";
 import { IPlan, IServiceClassCount } from "../interfaces/plan.interface";
 import ServiceModel from "../../ServiceModule/models/Service";
+import { invalidateCacheByPrefix } from "../../../middlewares/cache.middleware";
 
 const planService = new PlanServices();
 
@@ -264,6 +265,8 @@ export default class PlanController {
       isActive,
     });
 
+    await invalidateCacheByPrefix("plans");
+
     return res.status(201).json({
       success: true,
       message: "Plan created successfully",
@@ -387,6 +390,8 @@ export default class PlanController {
 
     const updatedPlan = await planService.updatePlan(planId, payload);
 
+    await invalidateCacheByPrefix("plans");
+
     return res.status(200).json({
       success: true,
       message: "Plan updated successfully",
@@ -406,6 +411,8 @@ export default class PlanController {
     }
 
     const plan = await planService.updatePlan(planId, { isActive });
+
+    await invalidateCacheByPrefix("plans");
 
     return res.status(200).json({
       success: true,

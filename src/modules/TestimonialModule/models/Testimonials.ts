@@ -1,5 +1,4 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
-import mongooseAutoPopulate from "mongoose-autopopulate";
 
 export interface ITestimonial extends Document {
   title: string;
@@ -35,8 +34,5 @@ const TestimonialSchema = new Schema<ITestimonial>(
   },
   { timestamps: true }
 );
-
-// 🔥 Enable plugin globally for this schema
-TestimonialSchema.plugin(mongooseAutoPopulate);
 
 export default mongoose.model<ITestimonial>("Testimonial", TestimonialSchema);

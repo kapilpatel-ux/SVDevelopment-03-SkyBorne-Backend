@@ -1,4 +1,7 @@
 import PlanController from "../controllers/PlanController";
+import { cacheResponse } from "../../../middlewares/cache.middleware";
+
+const planCache = cacheResponse({ keyPrefix: "plans", ttlSeconds: 300 });
 
 export const PlanRoute = [
   {
@@ -6,6 +9,7 @@ export const PlanRoute = [
     request: null,
     action: PlanController.getAllPlans,
     method: "get",
+    cache: planCache,
   },
   {
     path: "/admin/plans",

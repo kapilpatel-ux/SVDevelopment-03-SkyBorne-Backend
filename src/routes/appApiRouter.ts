@@ -5,6 +5,7 @@ import { catchErrors } from "../handlers/routeError.handler";
 import validateData from "../utils/validation.utils";
 import { verifyAccessToken } from "../middlewares/verifyToken.middleware";
 import { hasRole, verifyPermission } from "../middlewares/hasPermission";
+import { getEndpointRateLimiter } from "../utils/rateLimit.utils";
 
 const router = express.Router();
 
@@ -26,12 +27,18 @@ const publicApi = [
   "/meetings/:id/recording"
 ];
 
-appApiRoutes?.map(({ path, request, method, action,roles }: any) => {
+appApiRoutes?.map(
+  ({ path, request, method, action, roles, cache }: any) => {
   const isPublicRoute = publicApi.includes(path);
 
-  const middlewares = isPublicRoute
-    ? validateData(request)
-    : [verifyAccessToken, hasRole(roles), validateData(request)];
+  const rateLimiter = getEndpointRateLimiter(path, method);
+
+  const middlewares = [
+    ...(rateLimiter ? [rateLimiter] : []),
+    ...(isPublicRoute ? [] : [verifyAccessToken, hasRole(roles)]),
+    ...(cache ? [cache] : []),
+    validateData(request),
+  ];
 
   switch (method) {
     case "get":
