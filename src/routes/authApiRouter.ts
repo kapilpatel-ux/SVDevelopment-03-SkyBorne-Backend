@@ -78,13 +78,13 @@ routes.map((route) => {
     case "get":
       authApiRouter
         .route(route.name)
-        .get(middlewares, catchErrors(route?.action));
+        .get(...middlewares, catchErrors(route?.action));
       break;
 
     case "post":
       authApiRouter
         .route(route.name)
-        .post(middlewares, catchErrors(route?.action));
+        .post(...middlewares, catchErrors(route?.action));
       break;
   }
 });
