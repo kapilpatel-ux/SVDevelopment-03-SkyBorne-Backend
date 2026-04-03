@@ -20,7 +20,9 @@ import { CustomerRoute } from "../modules/CustomerModule/customer.route";
 import { OrderRoute } from "../modules/OrderModule/order.routes";
 import { CartRoute } from "../modules/ServiceModule/CartModule/Cart.route";
 import { EcomPaymentRoute } from "../modules/EcomPaymentModule/EcomPayment.route";
-const appApiRoutes: any = [
+import type { AppRouteDefinition } from "./route.types";
+
+const appApiRoutes: AppRouteDefinition[] = [
   ...PaymentApiRoutes,
   ...ServiceRoute,
   ...PlanRoute,

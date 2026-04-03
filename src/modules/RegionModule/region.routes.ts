@@ -1,8 +1,9 @@
 import { RegionController } from "./region.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _regionController = new RegionController();
 
-export const RegionRoute = [
+export const RegionRoute: AppRouteDefinition[] = [
   // Get all regions with pagination and search
   {
     path: "/regions",

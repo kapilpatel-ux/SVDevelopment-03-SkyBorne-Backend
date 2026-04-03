@@ -1,6 +1,7 @@
 import TestimonialController from "../controllers/TestimonialController";
+import type { AppRouteDefinition } from "../../../routes/route.types";
 
-export const TestimonialRoute = [
+export const TestimonialRoute: AppRouteDefinition[] = [
   {
     path: "/testimonials",
     request: null,

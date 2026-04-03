@@ -6,16 +6,10 @@ import {
   deleteTrainerSchema,
   getTrainersSchema,
 } from "./TrainerValidators";
+import type { AppRouteDefinition } from "../../routes/route.types";
 const trainerController = new TrainerController();
 
-
-interface RouteConfig {
-  path: string;
-  request: any;
-  action: (req: any, res: any) => Promise<any>;
-  method: "get" | "post" | "put" | "delete";
-}
-export const TrainerRoute: RouteConfig[] = [
+export const TrainerRoute: AppRouteDefinition[] = [
   {
     path: "/trainers",
     request: getTrainersSchema,

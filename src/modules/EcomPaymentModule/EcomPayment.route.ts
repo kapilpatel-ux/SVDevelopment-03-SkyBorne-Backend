@@ -1,8 +1,9 @@
-import { EcomPaymentController } from "./Ecompayment.controller"; 
+import { EcomPaymentController } from "./Ecompayment.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _ecomPaymentController = new EcomPaymentController();
 
-export const EcomPaymentRoute = [
+export const EcomPaymentRoute: AppRouteDefinition[] = [
   /**
    * Create Stripe checkout session from current cart
    * POST /ecom-payments/create-checkout-session

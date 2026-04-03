@@ -6,6 +6,7 @@ import validateData from "../utils/validation.utils";
 import { verifyAccessToken } from "../middlewares/verifyToken.middleware";
 import { hasRole, verifyPermission } from "../middlewares/hasPermission";
 import { getEndpointRateLimiter } from "../utils/rateLimit.utils";
+import type { AppRouteDefinition } from "./route.types";
 
 const router = express.Router();
 
@@ -28,7 +29,7 @@ const publicApi = [
 ];
 
 appApiRoutes?.map(
-  ({ path, request, method, action, roles, cache }: any) => {
+  ({ path, request, method, action, roles, cache }: AppRouteDefinition) => {
   const isPublicRoute = publicApi.includes(path);
 
   const rateLimiter = getEndpointRateLimiter(path, method);

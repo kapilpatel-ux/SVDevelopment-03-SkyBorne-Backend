@@ -1,6 +1,7 @@
 // services/stripe.service.ts
 
 import Stripe from "stripe";
+import { createHash } from "crypto";
 import Payment from "../models/Payment";
 import User from "../../UserModule/models/User";
 import cron from "node-cron";
@@ -35,6 +36,11 @@ export class StripeService {
       throw new Error("STRIPE_SECRET_KEY is not defined");
     }
     this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  }
+
+  private static buildIdempotencyKey(parts: string[]): string {
+    const seed = parts.join("|");
+    return `pay_${createHash("sha256").update(seed).digest("hex")}`;
   }
 
   private static getStripeClient(): Stripe {
@@ -200,6 +206,7 @@ export class StripeService {
     customCancelUrl?: string,
     previousSubscriptionId?: string,
     deferUntil?: Date,
+    idempotencyKey?: string,
   ): Promise<{
     checkoutUrl: string;
     sessionId: string;
@@ -212,6 +219,90 @@ export class StripeService {
     try {
       const user = await User.findById(userId);
       if (!user) throw new Error("User not found");
+
+      const IDEMPOTENCY_WINDOW_MS = 10 * 60 * 1000;
+      const normalizedIdempotencyKey = String(idempotencyKey || "").trim();
+      const idempotencyBucket = Math.floor(Date.now() / IDEMPOTENCY_WINDOW_MS);
+      let effectiveIdempotencyKey =
+        normalizedIdempotencyKey ||
+        this.buildIdempotencyKey([
+          "stripe",
+          userId,
+          plan,
+          String(userAmount),
+          currency,
+          billingType,
+          source,
+          String(idempotencyBucket),
+        ]);
+
+      const buildExistingResponse = (existingPayment: any) => ({
+        checkoutUrl:
+          existingPayment?.gatewayResponse?.checkoutUrl ||
+          existingPayment?.gatewayResponse?.checkout_url ||
+          "",
+        sessionId:
+          existingPayment?.gatewayResponse?.sessionId ||
+          existingPayment?.reference ||
+          existingPayment?.paymentIntentId ||
+          "",
+        reference:
+          existingPayment?.reference ||
+          existingPayment?.paymentIntentId ||
+          "",
+        amount:
+          typeof existingPayment?.localAmount === "number"
+            ? existingPayment.localAmount
+            : typeof existingPayment?.amount === "number"
+              ? existingPayment.amount
+              : userAmount,
+        currency:
+          String(existingPayment?.currency || "").trim() || currency,
+        originalAmount:
+          typeof existingPayment?.amount === "number"
+            ? existingPayment.amount
+            : userAmount,
+        originalCurrency:
+          String(existingPayment?.gatewayResponse?.originalCurrency || "") ||
+          String(existingPayment?.metadata?.originalCurrency || "") ||
+          currency,
+      });
+
+      const existingPayment = await Payment.findOne({
+        idempotencyKey: effectiveIdempotencyKey,
+        gateway: "stripe",
+      }).lean();
+
+      if (existingPayment) {
+        if (normalizedIdempotencyKey) {
+          return buildExistingResponse(existingPayment);
+        }
+
+        const existingCreatedAt = existingPayment?.createdAt
+          ? new Date(existingPayment.createdAt).getTime()
+          : 0;
+        const isRecent =
+          existingCreatedAt > 0 &&
+          Date.now() - existingCreatedAt <= IDEMPOTENCY_WINDOW_MS;
+        const isPending = existingPayment?.status === "PENDING";
+        const hasCheckoutUrl = Boolean(existingPayment?.gatewayResponse?.checkoutUrl);
+
+        if (isRecent && isPending && hasCheckoutUrl) {
+          return buildExistingResponse(existingPayment);
+        }
+
+        // Stale entry for generated key: rotate to allow a new checkout session.
+        effectiveIdempotencyKey = this.buildIdempotencyKey([
+          "stripe",
+          userId,
+          plan,
+          String(userAmount),
+          currency,
+          billingType,
+          source,
+          String(Date.now()),
+        ]);
+      }
 
       // ✅ NEW: Get user's country and determine local currency
       const countryCode = user.countryCode || user.country || "US";
@@ -281,6 +372,10 @@ export class StripeService {
         conversionRate: conversionRate.toString(),
       };
 
+      if (effectiveIdempotencyKey) {
+        metadata.idempotencyKey = effectiveIdempotencyKey;
+      }
+
       if (previousSubscriptionId) {
         metadata.previousSubscriptionId = previousSubscriptionId;
       }
@@ -333,33 +428,49 @@ export class StripeService {
       // Create checkout session with LOCAL CURRENCY
       const session = await this.stripe.checkout.sessions.create(
         sessionCreateParams,
+        effectiveIdempotencyKey ? { idempotencyKey: effectiveIdempotencyKey } : undefined,
       );
 
       // Create payment record with both amounts
-      const payment = await Payment.create({
-        userId,
-        orderRef,
-        reference: session.id,
-        amount: userAmount,              // Original USD amount
-        localAmount: localAmount,        // ✅ NEW: Converted local amount
-        currency: "USD",     // ✅ CHANGED: Store local currency
-        plan,
-        billingType,
-        previousSubscriptionId: previousSubscriptionId || undefined,
-        status: "PENDING",
-        gateway: "stripe",
-        paymentIntentId: session.id,
-        gatewayResponse: {
-          sessionId: session.id,
-          checkoutUrl: session.url,
-        },
-        source: source,
-        metadata: {                      // ✅ NEW: Store conversion metadata
-          countryCode,
-          conversionRate,
-          originalCurrency: currency,
-        },
-      });
+      try {
+        await Payment.create({
+          userId,
+          orderRef,
+          reference: session.id,
+          idempotencyKey: effectiveIdempotencyKey,
+          amount: userAmount,              // Original USD amount
+          localAmount: localAmount,        // ✅ NEW: Converted local amount
+          currency: "USD",     // ✅ CHANGED: Store local currency
+          plan,
+          billingType,
+          previousSubscriptionId: previousSubscriptionId || undefined,
+          status: "PENDING",
+          gateway: "stripe",
+          paymentIntentId: session.id,
+          gatewayResponse: {
+            sessionId: session.id,
+            checkoutUrl: session.url,
+            originalCurrency: currency,
+          },
+          source: source,
+          metadata: {                      // ✅ NEW: Store conversion metadata
+            countryCode,
+            conversionRate,
+            originalCurrency: currency,
+          },
+        });
+      } catch (err: any) {
+        if (err?.code === 11000 && effectiveIdempotencyKey) {
+          const duplicate = await Payment.findOne({
+            idempotencyKey: effectiveIdempotencyKey,
+            gateway: "stripe",
+          }).lean();
+          if (duplicate) {
+            return buildExistingResponse(duplicate);
+          }
+        }
+        throw err;
+      }
 
       return {
         checkoutUrl: session.url || "",

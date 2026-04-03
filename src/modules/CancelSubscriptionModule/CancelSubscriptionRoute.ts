@@ -1,6 +1,7 @@
 import CancelSubscriptionController from "./CancelSubscriptionController";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const CancelSubscriptionRoute = [
+export const CancelSubscriptionRoute: AppRouteDefinition[] = [
   {
     path: "/subscription/getAll",
     request: null,

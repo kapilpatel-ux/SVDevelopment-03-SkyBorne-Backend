@@ -1,9 +1,10 @@
 import ServiceController from "../controllers/ServiceController";
 import { cacheResponse } from "../../../middlewares/cache.middleware";
+import type { AppRouteDefinition } from "../../../routes/route.types";
 
 const serviceCache = cacheResponse({ keyPrefix: "services", ttlSeconds: 300 });
 
-export const ServiceRoute = [
+export const ServiceRoute: AppRouteDefinition[] = [
     // UPDATE STATUS (isActive) - Must be before generic :serviceId routes
   {
     path: "/services/:serviceId/status",

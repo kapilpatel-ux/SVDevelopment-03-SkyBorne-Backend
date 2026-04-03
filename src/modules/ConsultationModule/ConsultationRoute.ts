@@ -1,7 +1,8 @@
 import { ConsultationController } from "./ConsultationController";
 import { consultationSchema } from "./ConsultationRequest";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const ConsultationRoute = [
+export const ConsultationRoute: AppRouteDefinition[] = [
   {
     path: "/consultation",
     request: consultationSchema,

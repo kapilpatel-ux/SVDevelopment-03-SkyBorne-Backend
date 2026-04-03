@@ -6,6 +6,7 @@ interface IPayment extends Document {
 userId: mongoose.Types.ObjectId;
 orderRef: string;
 reference?: string;
+idempotencyKey?: string;
 amount: number;
 source?:string;
 localAmount: number;
@@ -60,6 +61,12 @@ const PaymentSchema = new Schema<IPayment>(
       index: true, // Add index for faster queries
     },
     reference: {
+      type: String,
+      unique: true,
+      sparse: true,
+      index: true,
+    },
+    idempotencyKey: {
       type: String,
       unique: true,
       sparse: true,

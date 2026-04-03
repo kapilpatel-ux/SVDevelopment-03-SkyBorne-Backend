@@ -1,8 +1,9 @@
-import { AdminController } from "./admin.controller"; 
+import { AdminController } from "./admin.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _adminController = new AdminController();
 
-export const AdminRoutes = [
+export const AdminRoutes: AppRouteDefinition[] = [
   // Get overview statistics
   {
     path: "/stats/overview",

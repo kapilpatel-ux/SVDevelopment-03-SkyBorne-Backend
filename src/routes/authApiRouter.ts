@@ -11,10 +11,11 @@ import sendOtpValidation, {
 } from "../modules/AuthModule/requests/otpRequest";
 import { catchErrors } from "../handlers/routeError.handler";
 import { getEndpointRateLimiter } from "../utils/rateLimit.utils";
+import type { AuthRouteDefinition } from "./route.types";
 
 const authApiRouter = express.Router();
 
-const routes = [
+const routes: AuthRouteDefinition[] = [
   {
     name: "/signup",
     middleware: validateData(RegisterValidationSchema),

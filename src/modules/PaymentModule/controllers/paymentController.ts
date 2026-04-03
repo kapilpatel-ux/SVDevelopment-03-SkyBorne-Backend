@@ -147,6 +147,14 @@ export default class PaymentController {
         cancelUrl,
       } = req.body;
 
+      const idempotencyKey = String(
+        req.headers["idempotency-key"] ||
+          req.headers["x-idempotency-key"] ||
+          req.body?.idempotencyKey ||
+          ""
+      )
+        .trim() || undefined;
+
       const normalizedSource = String(source ?? "")
         .trim()
         .toLowerCase();
@@ -263,6 +271,9 @@ export default class PaymentController {
           billingType, // Pass billing type
           paymentSource === "app" ? appSuccessUrl : undefined,
           paymentSource === "app" ? appCancelUrl : undefined,
+          undefined,
+          undefined,
+          idempotencyKey,
         );
 
         // Add paymentLink for frontend compatibility
@@ -315,6 +326,14 @@ export default class PaymentController {
         successUrl,
         cancelUrl,
       } = req.body;
+
+      const idempotencyKey = String(
+        req.headers["idempotency-key"] ||
+          req.headers["x-idempotency-key"] ||
+          req.body?.idempotencyKey ||
+          ""
+      )
+        .trim() || undefined;
 
       if (!userId || !plan || amount === undefined || amount === null) {
         return res.status(400).json({
@@ -476,6 +495,7 @@ export default class PaymentController {
           paymentSource === "app" ? appCancelUrl : undefined,
           previousSubscriptionId || undefined,
           deferUntil || undefined,
+          idempotencyKey,
         );
 
         paymentData.paymentLink = paymentData.checkoutUrl;

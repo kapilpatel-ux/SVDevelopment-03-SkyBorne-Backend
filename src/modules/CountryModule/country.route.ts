@@ -1,8 +1,9 @@
 import { CountryController } from "./country.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _countryController = new CountryController();
 
-export const CountryRoute = [
+export const CountryRoute: AppRouteDefinition[] = [
   // Get all countries with pagination
   {
     path: "/countries",

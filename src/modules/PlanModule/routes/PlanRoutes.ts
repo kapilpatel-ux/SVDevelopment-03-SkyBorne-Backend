@@ -1,9 +1,10 @@
 import PlanController from "../controllers/PlanController";
 import { cacheResponse } from "../../../middlewares/cache.middleware";
+import type { AppRouteDefinition } from "../../../routes/route.types";
 
 const planCache = cacheResponse({ keyPrefix: "plans", ttlSeconds: 300 });
 
-export const PlanRoute = [
+export const PlanRoute: AppRouteDefinition[] = [
   {
     path: "/plans",
     request: null,

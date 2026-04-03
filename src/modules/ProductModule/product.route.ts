@@ -4,10 +4,11 @@ import {
   UpdateProductSchema,
   UpdateProductStatusSchema,
 } from "./requests/product.validation";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _productController = new ProductController();
 
-export const ProductRoute = [
+export const ProductRoute: AppRouteDefinition[] = [
   // =============================
   // GET ROUTES
   // =============================

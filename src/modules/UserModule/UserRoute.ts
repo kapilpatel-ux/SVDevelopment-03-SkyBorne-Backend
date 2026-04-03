@@ -1,6 +1,7 @@
 import { UserController } from "./controllers/userController";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const UserRoute = [
+export const UserRoute: AppRouteDefinition[] = [
   {
     path: "/me",
     request: null,

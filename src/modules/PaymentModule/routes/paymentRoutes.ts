@@ -5,8 +5,9 @@ import {
   GetPaymentByIdSchema,
   GetPaymentStatusSchema,
 } from "../requests/getPaymentStatus";
+import type { AppRouteDefinition } from "../../../routes/route.types";
 
-export const PaymentApiRoutes = [
+export const PaymentApiRoutes: AppRouteDefinition[] = [
   {
     path: "/payments",
     request: CreatePaymentOrderSchema,
@@ -31,9 +32,9 @@ export const PaymentApiRoutes = [
     action: PaymentController.upgradePlanOrder,
     method: "post",
   },
-    {
+  {
     path: "/payment/verify-mobile",
-    requyoest: null,
+    request: null,
     action: PaymentController.verifyMobilePayment,
     method: "post",
   },

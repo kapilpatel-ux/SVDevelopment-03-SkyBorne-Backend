@@ -7,8 +7,9 @@ import {
   ShareMeetingLinkSchema,
   RedirectMeetingSchema,
 } from "./MeetingModels/MeetingValidation";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const MeetingRoute = [
+export const MeetingRoute: AppRouteDefinition[] = [
   {
     path: "/meetings/create",
     request: CreateMeetingSchema,

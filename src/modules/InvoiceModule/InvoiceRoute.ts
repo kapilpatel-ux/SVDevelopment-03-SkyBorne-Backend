@@ -1,7 +1,8 @@
 // modules/PaymentModule/routes/InvoiceRoutes.ts
 import InvoiceController from "./InvoiceController";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const InvoiceRoutes = [
+export const InvoiceRoutes: AppRouteDefinition[] = [
   {
     path: "/invoice/:invoiceId/download",
     action: InvoiceController.getInvoiceById,

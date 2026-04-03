@@ -1,7 +1,8 @@
 import FeedbackController from "./FeedbackController";
 import { createFeedbackValidationSchema } from "./FeedbackRequest";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
-export const FeedbackRoute = [
+export const FeedbackRoute: AppRouteDefinition[] = [
   {
     path: "/feedback",
     request: null,

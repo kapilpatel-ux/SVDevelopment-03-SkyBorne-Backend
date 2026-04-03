@@ -1,8 +1,9 @@
 import { CustomerController } from "./customer.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _customerController = new CustomerController();
 
-export const CustomerRoute = [
+export const CustomerRoute: AppRouteDefinition[] = [
   /**
    * Get my customer profile
    * (only if user has placed at least one order)

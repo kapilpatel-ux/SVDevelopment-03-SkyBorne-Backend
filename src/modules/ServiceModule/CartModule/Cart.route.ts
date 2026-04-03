@@ -1,8 +1,9 @@
-import { CartController } from "./Cart.controller"; 
+import { CartController } from "./Cart.controller";
+import type { AppRouteDefinition } from "../../../routes/route.types";
 
 const _cartController = new CartController();
 
-export const CartRoute = [
+export const CartRoute: AppRouteDefinition[] = [
   /**
    * Get my cart
    * GET /cart

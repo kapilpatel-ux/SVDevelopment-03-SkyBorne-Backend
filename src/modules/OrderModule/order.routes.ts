@@ -1,8 +1,9 @@
 import { OrderController } from "./order.controller";
+import type { AppRouteDefinition } from "../../routes/route.types";
 
 const _orderController = new OrderController();
 
-export const OrderRoute = [
+export const OrderRoute: AppRouteDefinition[] = [
   /**
    * Place new order
    * (logged-in user)
