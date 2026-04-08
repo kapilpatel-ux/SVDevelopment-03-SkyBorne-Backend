@@ -5,6 +5,7 @@ import Order from "../modules/OrderModule/order.model";
 import Customer from "../modules/CustomerModule/customer.model";
 import Cart from "../modules/ServiceModule/CartModule/Cart.model";
 import User from "../modules/UserModule/models/User";
+import Product from "../modules/ProductModule/product.models";
 import { sendEcomOrderSuccessEmails } from "./ecomOrderEmail.service";
 
 // ── Stripe instance (separate from subscription stripe) ──────────────────────
@@ -13,6 +14,64 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
 });
 
 export class EcomStripeService {
+  private static async decrementProductStockForOrderItems(
+    orderItems: Array<{ product: any; quantity: number }>
+  ) {
+    const quantityByProduct = new Map<string, number>();
+
+    for (const item of orderItems || []) {
+      const productId = item?.product?.toString?.() || String(item?.product || "").trim();
+      const qty = Number(item?.quantity || 0);
+
+      if (!productId || !mongoose.Types.ObjectId.isValid(productId) || qty <= 0) continue;
+      quantityByProduct.set(productId, (quantityByProduct.get(productId) || 0) + qty);
+    }
+
+    for (const [productId, qty] of quantityByProduct.entries()) {
+      try {
+        // First try strict decrement when enough stock exists.
+        const strict = await Product.updateOne(
+          { _id: productId, stock: { $gte: qty } },
+          { $inc: { stock: -qty } }
+        );
+
+        if ((strict as any)?.modifiedCount > 0) {
+          console.log("✅ [EcomStripe] Stock decremented:", { productId, qty });
+          continue;
+        }
+
+        // Fallback: clamp to zero when stock is lower than purchased quantity.
+        const product = await Product.findById(productId).select("name stock").exec();
+        if (!product) {
+          console.warn("⚠️ [EcomStripe] Product not found for stock decrement:", { productId, qty });
+          continue;
+        }
+
+        const currentStock = Number((product as any).stock || 0);
+        const nextStock = Math.max(0, currentStock - qty);
+
+        if (nextStock !== currentStock) {
+          (product as any).stock = nextStock;
+          await product.save();
+        }
+
+        console.warn("⚠️ [EcomStripe] Stock adjusted with low-stock fallback:", {
+          productId,
+          productName: (product as any)?.name,
+          orderedQty: qty,
+          previousStock: currentStock,
+          newStock: nextStock,
+        });
+      } catch (stockErr: any) {
+        console.error("❌ [EcomStripe] Failed to decrement stock:", {
+          productId,
+          qty,
+          message: stockErr?.message || stockErr,
+        });
+      }
+    }
+  }
+
   private static async buildOrderItemsFromStripeLineItems(lineItems: any[]) {
     let subtotal = 0;
     const items: Array<{
@@ -350,6 +409,9 @@ console.log("🔵 [EcomStripe] Mapped shippingAddress:", shippingAddress);
       paidAt: new Date(),
     });
     console.log("✅ [EcomStripe] Order created:", order._id);
+
+    // ── 3.1 Decrement product stock based on purchased quantities ───────────
+    await EcomStripeService.decrementProductStockForOrderItems(orderItems);
 
     // ── 4. Create EcomPayment ───────────────────────────────────────────────
     console.log("🔵 [EcomStripe] Step 4: Creating EcomPayment for paymentIntent:", paymentIntent.id);
