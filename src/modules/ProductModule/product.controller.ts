@@ -147,14 +147,11 @@ async getAllPublishedProducts(req: Request, res: Response, next: NextFunction) {
           ? (product as any).toObject()
           : product;
 
-<<<<<<< Updated upstream
-=======
       const categoryName =
         typeof productData.category === "object" && productData.category !== null
           ? productData.category.name || productData.category.title || ""
           : "";
 
->>>>>>> Stashed changes
       const specifications = Array.isArray(productData.specifications)
         ? productData.specifications
         : [];
