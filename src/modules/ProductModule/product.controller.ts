@@ -147,33 +147,9 @@ async getAllPublishedProducts(req: Request, res: Response, next: NextFunction) {
           ? (product as any).toObject()
           : product;
 
-      const categoryName =
-        typeof productData.category === "object" && productData.category !== null
-          ? productData.category.name || productData.category.title || ""
-          : "";
-
-      const fallbackSpecifications = [
-        { label: "Category", value: categoryName || "—" },
-        { label: "Price", value: `$${productData.price}` },
-        {
-          label: "Availability",
-          value:
-            typeof productData.stock === "number" && productData.stock <= 0
-              ? "Out of stock"
-              : "In stock",
-        },
-        {
-          label: "Stock",
-          value:
-            typeof productData.stock === "number" ? String(productData.stock) : "—",
-        },
-        { label: "Status", value: productData.status || "active" },
-      ];
-
-      const specifications =
-        Array.isArray(productData.specifications) && productData.specifications.length
-          ? productData.specifications
-          : fallbackSpecifications;
+      const specifications = Array.isArray(productData.specifications)
+        ? productData.specifications
+        : [];
 
       const shippingInfo =
         (productData.shippingInfo || "").trim() ||
