@@ -147,13 +147,19 @@ async getAllPublishedProducts(req: Request, res: Response, next: NextFunction) {
           ? (product as any).toObject()
           : product;
 
+<<<<<<< Updated upstream
+=======
+      const categoryName =
+        typeof productData.category === "object" && productData.category !== null
+          ? productData.category.name || productData.category.title || ""
+          : "";
+
+>>>>>>> Stashed changes
       const specifications = Array.isArray(productData.specifications)
         ? productData.specifications
         : [];
 
-      const shippingInfo =
-        (productData.shippingInfo || "").trim() ||
-        "Standard delivery in 3–5 business days. Free shipping on orders over $50. Returns within 30 days.";
+      const shippingInfo = (productData.shippingInfo || "").trim();
 
       const reviews = Array.isArray(productData.reviews) ? productData.reviews : [];
 
