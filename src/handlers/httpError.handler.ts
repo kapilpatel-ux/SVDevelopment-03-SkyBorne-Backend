@@ -1,5 +1,4 @@
 import { NextFunction, Request, Response } from 'express';
-import { getErrorMessage } from './catchError.handler';
 
 export class HttpError extends Error {
   statusCode: number = 400;
@@ -63,8 +62,28 @@ export async function httpErrorHandler(
   res: Response,
   next: NextFunction
 ) {
-  if (err instanceof HttpError) {
-    return res.status(err.statusCode).json(getErrorMessage(err));
+  if (res.headersSent) {
+    return next(err);
   }
-  return res.status(400).json(getErrorMessage(err));
+
+  if (err instanceof HttpError) {
+    if (err.statusCode >= 500) {
+      console.error('[httpErrorHandler] Internal HttpError:', err);
+      return res.status(err.statusCode).json({
+        success: false,
+        message: 'Internal server error',
+      });
+    }
+
+    return res.status(err.statusCode).json({
+      success: false,
+      message: err.message || 'Request failed',
+    });
+  }
+
+  console.error('[httpErrorHandler] Unhandled error:', err);
+  return res.status(500).json({
+    success: false,
+    message: 'Internal server error',
+  });
 }
