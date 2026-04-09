@@ -30,6 +30,7 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.on("error", reject);
 
     const PAGE_WIDTH = 545;
+    const displayCurrency = "USD";
     const taxRate = Number.isFinite(invoiceData.taxRate) ? invoiceData.taxRate! : 0;
     const totals = calculateVatFromTotal(invoiceData.amount, taxRate);
     const taxLabel = taxRate > 0 ? `VAT (${Math.round(taxRate * 100)}%)` : "Tax (0%)";
@@ -91,23 +92,23 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.font("Helvetica").fontSize(10)
       .text("Subscription Plan", col.desc, rowY)
       .text(invoiceData.plan, col.plan, rowY)
-      .text(`${invoiceData.currency} ${totals.subtotal.toFixed(2)}`, col.amt, rowY)
-      .text(`${invoiceData.currency} ${totals.subtotal.toFixed(2)}`, col.total, rowY);
+      .text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, col.amt, rowY)
+      .text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, col.total, rowY);
 
     doc.moveDown(2);
 
     const sumX = 350;
 
     doc.font("Helvetica-Bold").fontSize(11).text("Subtotal:", sumX);
-    doc.font("Helvetica").fontSize(10).text(`${invoiceData.currency} ${totals.subtotal.toFixed(2)}`, sumX);
+    doc.font("Helvetica").fontSize(10).text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, sumX);
 
     doc.moveDown(0.3);
     doc.font("Helvetica-Bold").fontSize(11).text(`${taxLabel}:`, sumX);
-    doc.font("Helvetica").fontSize(10).text(`${invoiceData.currency} ${totals.vatAmount.toFixed(2)}`, sumX);
+    doc.font("Helvetica").fontSize(10).text(`${displayCurrency} ${totals.vatAmount.toFixed(2)}`, sumX);
 
     doc.moveDown(0.3);
     doc.font("Helvetica-Bold").fontSize(12).text("Total:", sumX);
-    doc.font("Helvetica-Bold").fontSize(12).text(`${invoiceData.currency} ${totals.total.toFixed(2)}`, sumX);
+    doc.font("Helvetica-Bold").fontSize(12).text(`${displayCurrency} ${totals.total.toFixed(2)}`, sumX);
 
     doc.moveDown(2);
 
