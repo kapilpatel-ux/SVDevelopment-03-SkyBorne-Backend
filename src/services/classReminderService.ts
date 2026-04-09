@@ -239,7 +239,9 @@ static async getCountriesByRegion(regionName: string) {
         .map((entry: any) => String(entry.userId || "").trim())
         .filter(Boolean);
 
-      if (pushUserIds.length > 0) {
+      const shouldSendPushReminder = [30, 10].includes(minutesBefore);
+
+      if (pushUserIds.length > 0 && shouldSendPushReminder) {
         PushNotificationService.sendSessionReminderToUsers(pushUserIds, {
           meetingId: (meeting._id as string).toString(),
           meetingTitle: meeting.title,
@@ -248,6 +250,11 @@ static async getCountriesByRegion(regionName: string) {
           region,
         }).catch((pushError: any) => {
           console.error("❌ Failed to send class reminder push notification:", pushError?.message || pushError);
+        });
+      } else if (pushUserIds.length > 0 && !shouldSendPushReminder) {
+        console.log("[ClassReminderService] push reminder skipped for offset", {
+          meetingId: (meeting._id as string).toString(),
+          minutesBefore,
         });
       }
 
