@@ -32,6 +32,3 @@ Thumbs.db
 # Uploaded files
 uploads/
 temp/
-
-# Firebase credentials
-!firebase-service-account.example.json
