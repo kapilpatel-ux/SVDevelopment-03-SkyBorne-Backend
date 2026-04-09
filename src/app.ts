@@ -18,6 +18,9 @@ import { apiTimeout } from "./middlewares/timeout";
 import { ExpressAdapter } from '@bull-board/express';
 import { createBullBoard } from '@bull-board/api';
 import { BullAdapter } from '@bull-board/api/bullAdapter';
+import { verifyAccessToken } from "./middlewares/verifyToken.middleware";
+import { hasRole } from "./middlewares/hasPermission";
+import { getAllowedOrigins, isOriginAllowed } from "./utils/cors";
 import Stripe from 'stripe';
 import zoomWebhook from "./routes/zoomWebhook";
 import PaymentController from "./modules/PaymentModule/controllers/paymentController";
@@ -26,24 +29,34 @@ import stripeWebhook from "./modules/PaymentModule/controllers/stripeWebhook";
 import ngeniusWebhook from "./modules/PaymentModule/controllers/ngeniusWebhook";
 import ecomStripeWebhook from "./routes/ecomstripe.webhook"
 
+dotenv.config();
+
 const app: Application = express();
 
 
 
-// BullBoard UI
-const serverAdapter = new ExpressAdapter();
-serverAdapter.setBasePath("/admin/queues");
+// BullBoard UI (restricted in production by default)
+const isProduction =
+  process.env.APP_ENV === "production" || process.env.NODE_ENV === "production";
+const allowedOrigins = getAllowedOrigins();
+const shouldExposeQueueDashboard =
+  !isProduction || process.env.ENABLE_QUEUE_DASHBOARD === "true";
 
+if (shouldExposeQueueDashboard) {
+  const serverAdapter = new ExpressAdapter();
+  serverAdapter.setBasePath("/admin/queues");
 
+  createBullBoard({
+    queues: [new BullAdapter(emailQueue)],
+    serverAdapter,
+  });
 
-createBullBoard({
-  queues: [new BullAdapter(emailQueue)],
-  serverAdapter,
-});
+  const queueDashboardAuth = isProduction
+    ? [verifyAccessToken, hasRole(["admin"])]
+    : [];
 
-app.use("/admin/queues", serverAdapter.getRouter());
-
-dotenv.config();
+  app.use("/admin/queues", ...queueDashboardAuth, serverAdapter.getRouter());
+}
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -65,7 +78,12 @@ app.use(
 );
 app.use(
   cors({
-    origin: true,
+    origin: (origin, callback) => {
+      if (isOriginAllowed(origin, allowedOrigins)) {
+        return callback(null, true);
+      }
+      return callback(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   })
 );

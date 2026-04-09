@@ -6,7 +6,7 @@ import { logger } from "./winston.utils";
 const validateData =
   (schema: any) => async (req: Request, res: Response, next: () => void) => {
     try {
-      if (!schema) next();
+      if (!schema) return next();
       await schema.validate(
         {
           body: req.body,
@@ -27,7 +27,7 @@ const validateData =
         );
 
         return res
-          .status(500)
+          .status(400)
           .json({
             success: false,
             message: `Validation Errors. ${err.errors[0]}`,

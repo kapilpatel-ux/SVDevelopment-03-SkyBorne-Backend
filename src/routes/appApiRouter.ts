@@ -17,17 +17,18 @@ function methodNotAllow(req: Request) {
 const publicApi = [
   "/about-us",
   "/services",
+  "/services/active",
   "/plans",
   "/testimonials",
   "/faq",
   "/consultation",
   "/news-letter",
   "/countries",
-  "/meetings/:id/recording",
-  "/ecom-categories/active",
+  "/products",
   "/products/published",
+  "/products/category/:categoryId",
   "/products/:productId",
-  "/products/category/:categoryId"
+  "/meetings/:id/recording"
 ];
 
 appApiRoutes?.map(({ path, request, method, action,roles }: any) => {
