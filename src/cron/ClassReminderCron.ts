@@ -4,8 +4,8 @@ import Meeting from "../modules/MeetingModule/MeetingModels/Meeting";
 import { ClassReminderService } from "../services/classReminderService";
 
 /**
- * Cron Job: Check for upcoming classes and send reminders.
- * Runs every minute and sends reminders for configured offsets.
+ * Cron Job: Check for upcoming classes and send reminders 10 minutes before
+ * Runs every minute to check if any class is starting in the next 10-15 minutes
  */
 export const startClassReminderCron = () => {
   console.log("🚀 Starting Class Reminder Cron Job...");
@@ -16,8 +16,8 @@ export const startClassReminderCron = () => {
       const now = new Date();
       console.log("⏰ Cron started:", new Date().toISOString());
       const reminderConfigs = [
-        { minutesBefore: 24 * 60, flag: "reminder24HourSent" as const },
         { minutesBefore: 30, flag: "reminder30MinSent" as const },
+        { minutesBefore: 10, flag: "reminder10MinSent" as const },
       ];
 
       for (const reminder of reminderConfigs) {
@@ -32,9 +32,7 @@ export const startClassReminderCron = () => {
             $lte: timeWindow.end,
           },
           [reminder.flag]: { $ne: true },
-        }).select(
-          "_id title liveRegion liveTime localTime reminder24HourSent reminder30MinSent reminder10MinSent",
-        );
+        }).select("_id title liveRegion liveTime localTime reminder30MinSent reminder10MinSent");
 
         if (upcomingMeetings.length > 0) {
           console.log(

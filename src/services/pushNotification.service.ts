@@ -35,6 +35,12 @@ export class PushNotificationService {
 
       if (serviceAccountJson) {
         const credentials = JSON.parse(serviceAccountJson);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: "FCM_SERVICE_ACCOUNT_JSON",
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
         admin.initializeApp({
           credential: admin.credential.cert(credentials),
         });
@@ -45,6 +51,13 @@ export class PushNotificationService {
       if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
         const raw = fs.readFileSync(serviceAccountPath, "utf8");
         const credentials = JSON.parse(raw);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: "FCM_SERVICE_ACCOUNT_PATH",
+          path: serviceAccountPath,
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
         admin.initializeApp({
           credential: admin.credential.cert(credentials),
         });
@@ -64,6 +77,13 @@ export class PushNotificationService {
       if (fs.existsSync(defaultServiceAccountPath)) {
         const raw = fs.readFileSync(defaultServiceAccountPath, "utf8");
         const credentials = JSON.parse(raw);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: "firebase-service-account.json",
+          path: defaultServiceAccountPath,
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
         admin.initializeApp({
           credential: admin.credential.cert(credentials),
         });
@@ -144,10 +164,25 @@ export class PushNotificationService {
 
     const response = await admin.messaging().sendEachForMulticast(message);
     const invalidTokens: string[] = [];
+    const errorCodeSummary: Record<string, number> = {};
+    const failureSamples: Array<{ tokenPrefix: string; code: string; message: string }> = [];
 
     response.responses.forEach((item, index) => {
       if (!item.success) {
         const code = item.error?.code || "";
+        const message = item.error?.message || "";
+        const normalizedCode = code || "unknown";
+
+        errorCodeSummary[normalizedCode] = (errorCodeSummary[normalizedCode] || 0) + 1;
+
+        if (failureSamples.length < 5) {
+          failureSamples.push({
+            tokenPrefix: String(tokens[index] || "").slice(0, 24),
+            code: normalizedCode,
+            message,
+          });
+        }
+
         if (
           code === "messaging/registration-token-not-registered" ||
           code === "messaging/invalid-registration-token"
@@ -163,12 +198,23 @@ export class PushNotificationService {
       successCount: response.successCount,
       failureCount: response.failureCount,
       invalidTokenCount: invalidTokens.length,
+      errorCodeSummary,
     });
+
+    if (response.failureCount > 0) {
+      console.warn("⚠️ [PushNotificationService] dispatch:failure-details", {
+        title: payload.title,
+        errorCodeSummary,
+        failureSamples,
+      });
+    }
 
     return {
       successCount: response.successCount,
       failureCount: response.failureCount,
       invalidTokens,
+      errorCodeSummary,
+      failureSamples,
       reason: "sent",
     };
   }

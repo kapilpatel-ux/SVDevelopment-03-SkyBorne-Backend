@@ -54,21 +54,16 @@ export class EcomPaymentController {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
-      const checkoutEmail =
-        String(shippingAddress?.email || "").trim().toLowerCase() ||
-        String((user as any).email || "").trim().toLowerCase();
-
       const result = await EcomStripeService.createEcomCheckoutSession(
         userId,
         cart.items.map((item: any) => ({
-          productId: item.product?.toString?.() || String(item.product),
           name: item.name,
           price: item.price,
           quantity: item.quantity,
           image: item.image,
         })),
         shippingAddress,
-        checkoutEmail,
+        (user as any).email,
         source,
         successUrl,
         cancelUrl

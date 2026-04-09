@@ -9,38 +9,6 @@ import MailLog from "../modules/MailModule/MailModel";
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 
-const TIMEZONE_ABBREVIATION_MAP: Record<string, string> = {
-  "Asia/Kolkata": "IST",
-  "Asia/Dubai": "GST",
-  UTC: "UTC",
-};
-
-const getTimezoneDisplayLabel = (timezone: string): string => {
-  const tz = String(timezone || "").trim() || "UTC";
-  const mappedAbbreviation = TIMEZONE_ABBREVIATION_MAP[tz];
-  if (mappedAbbreviation) {
-    return `${tz} (${mappedAbbreviation})`;
-  }
-
-  try {
-    const now = new Date();
-    const shortOffset = new Intl.DateTimeFormat("en-US", {
-      timeZone: tz,
-      timeZoneName: "shortOffset",
-    })
-      .formatToParts(now)
-      .find((part) => part.type === "timeZoneName")?.value;
-
-    if (shortOffset) {
-      return `${tz} (${shortOffset})`;
-    }
-  } catch (error) {
-    // Fallback to timezone string when Intl formatting fails.
-  }
-
-  return tz;
-};
-
 const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
@@ -375,7 +343,6 @@ classReminderEmailQueue.process(async (job: any) => {
       const resolvedRegionLocalDate = String(regionLocalDate || "").trim();
       const useRegionTimeZone = Boolean(resolvedRegionTimeZone);
       const timezone = useRegionTimeZone ? resolvedRegionTimeZone : userTimeZone;
-      const timezoneDisplay = getTimezoneDisplayLabel(timezone);
       let displayTimeZone = timezone;
       let localTime = "TBD";
       let localDate = "TBD";
@@ -439,7 +406,7 @@ classReminderEmailQueue.process(async (job: any) => {
         region,
         localTime,
         localDate,
-        getTimezoneDisplayLabel(displayTimeZone || timezoneDisplay),
+        displayTimeZone,
         trainerName,
         duration,
         reminderOffsetMinutes,

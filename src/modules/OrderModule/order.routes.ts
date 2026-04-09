@@ -55,23 +55,6 @@ export const OrderRoute = [
     method: "get",
   },
 
-  // Cancel order (user can cancel pending orders)
-  {
-    path: "/orders/:orderId/cancel",
-    request: null,
-    action: _orderController.cancelOrder,
-    method: "delete",
-  },
-
-  // Refund order (admin only)
-  {
-    path: "/orders/:orderId/refund",
-    request: null,
-    action: _orderController.refundOrder,
-    method: "post",
-    roles: ["admin"],
-  },
-
   // existing Admin: Update order status
   {
     path: "/orders/:orderId/status",

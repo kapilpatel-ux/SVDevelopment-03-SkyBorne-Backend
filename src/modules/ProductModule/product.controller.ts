@@ -4,24 +4,8 @@ import productModels, { IProduct } from "./product.models";
 import mongoose from "mongoose";
 import { s3 } from "../../utils/s3";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
-import Order from "../OrderModule/order.model";
-import User from "../UserModule/models/User";
 
 const productRepository = new ProductRepository();
-
-const parseJsonArray = (value: any): any[] | undefined => {
-  if (!value) return undefined;
-  if (Array.isArray(value)) return value;
-  if (typeof value === "string") {
-    try {
-      const parsed = JSON.parse(value);
-      if (Array.isArray(parsed)) return parsed;
-    } catch {
-      return undefined;
-    }
-  }
-  return undefined;
-};
 
 export class ProductController {
   /**
@@ -110,7 +94,7 @@ async getAllPublishedProducts(req: Request, res: Response, next: NextFunction) {
 
     const products = await productModels.find(filter)
       .sort(sortOption)
-      .populate({ path: "category", select: "name _id" })
+      .populate({ path: "category", select: "title _id" })
       .exec();
 
     return res.json({ success: true, data: products });
@@ -142,137 +126,7 @@ async getAllPublishedProducts(req: Request, res: Response, next: NextFunction) {
         });
       }
 
-      const productData: any =
-        typeof (product as any).toObject === "function"
-          ? (product as any).toObject()
-          : product;
-
-      const categoryName =
-        typeof productData.category === "object" && productData.category !== null
-          ? productData.category.name || productData.category.title || ""
-          : "";
-
-      const specifications = Array.isArray(productData.specifications)
-        ? productData.specifications
-        : [];
-
-      const shippingInfo = (productData.shippingInfo || "").trim();
-
-      const reviews = Array.isArray(productData.reviews) ? productData.reviews : [];
-
-      return res.json({
-        success: true,
-        data: {
-          ...productData,
-          specifications,
-          shippingInfo,
-          reviews,
-        },
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-
-  /**
-   * Add review to a product (only after delivered order)
-   */
-  async addProductReview(req: Request, res: Response, next: NextFunction) {
-    try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          message: "User not authenticated",
-        });
-      }
-
-      const { productId } = req.params;
-      const { rating, comment } = req.body;
-
-      if (!mongoose.Types.ObjectId.isValid(productId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid product ID format",
-        });
-      }
-
-      const parsedRating =
-        rating === undefined || rating === null ? undefined : Number(rating);
-
-      if (parsedRating === undefined || Number.isNaN(parsedRating)) {
-        return res.status(400).json({
-          success: false,
-          message: "Rating is required",
-        });
-      }
-
-      if (parsedRating < 1 || parsedRating > 5) {
-        return res.status(400).json({
-          success: false,
-          message: "Rating must be between 1 and 5",
-        });
-      }
-
-      if (comment !== undefined && typeof comment !== "string") {
-        return res.status(400).json({
-          success: false,
-          message: "Comment must be a string",
-        });
-      }
-
-      const userId = (req.user as any)?.id || (req.user as any)?._id;
-
-      const deliveredOrder = await Order.findOne({
-        userId,
-        orderStatus: "Delivered",
-        "items.product": productId,
-      }).exec();
-
-      if (!deliveredOrder) {
-        return res.status(403).json({
-          success: false,
-          message: "You can review products only after delivery",
-        });
-      }
-
-      const user = await User.findById(userId)
-        .select("firstName lastName")
-        .exec();
-
-      const name = `${user?.firstName || ""} ${user?.lastName || ""}`
-        .trim()
-        .slice(0, 120);
-
-      const review = {
-        name: name || undefined,
-        rating: parsedRating,
-        comment: typeof comment === "string" ? comment.trim() : undefined,
-        createdAt: new Date(),
-      };
-
-      const updatedProduct = await productModels
-        .findByIdAndUpdate(
-          productId,
-          {
-            $push: { reviews: review },
-          },
-          { new: true, runValidators: true }
-        )
-        .populate({ path: "category", select: "name _id" })
-        .exec();
-
-      if (!updatedProduct) {
-        return res.status(404).json({
-          success: false,
-          message: "Product not found",
-        });
-      }
-
-      return res.status(201).json({
-        success: true,
-        message: "Review added successfully",
-        data: updatedProduct,
-      });
+      return res.json({ success: true, data: product });
     } catch (error) {
       next(error);
     }
@@ -291,13 +145,9 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       name,
       category,
       price,
-      stock,
       status = "inactive",
       description = "",
       imageBase64,
-      specifications,
-      shippingInfo,
-      reviews,
     } = req.body;
 
     console.log("=== PARSED FIELDS ===");
@@ -337,16 +187,6 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       });
     }
     console.log("PASSED: status validation");
-
-    if (stock !== undefined) {
-      const parsedStock = Number(stock);
-      if (!Number.isInteger(parsedStock) || parsedStock < 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Stock must be a non-negative integer",
-        });
-      }
-    }
 
     if (!imageBase64) {
       console.log("FAILED: imageBase64 missing");
@@ -420,24 +260,8 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       description: description.trim(),
     };
 
-    if (stock !== undefined) {
-      productData.stock = Number(stock);
-    }
-
     if (category) {
       productData.category = new mongoose.Types.ObjectId(category);
-    }
-
-    const parsedSpecs = parseJsonArray(specifications);
-    if (parsedSpecs) {
-      productData.specifications = parsedSpecs;
-    }
-    if (shippingInfo !== undefined) {
-      productData.shippingInfo = String(shippingInfo).trim();
-    }
-    const parsedReviews = parseJsonArray(reviews);
-    if (parsedReviews) {
-      productData.reviews = parsedReviews;
     }
 
     console.log("productData:", productData);
@@ -470,18 +294,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
   async updateProduct(req: Request, res: Response, next: NextFunction) {
     try {
       const { productId } = req.params;
-      const {
-        name,
-        category,
-        price,
-        stock,
-        status,
-        imageBase64,
-        description,
-        specifications,
-        shippingInfo,
-        reviews,
-      } = req.body;
+      const { name, category, price, stock, status, imageBase64, description } = req.body;
 
       if (!mongoose.Types.ObjectId.isValid(productId)) {
         return res.status(400).json({ success: false, message: "Invalid product ID format" });
@@ -495,10 +308,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
         stock === undefined &&
         !status &&
         !imageBase64 &&
-        description === undefined &&
-        specifications === undefined &&
-        shippingInfo === undefined &&
-        reviews === undefined
+        description === undefined
       ) {
         return res.status(400).json({
           success: false,
@@ -569,15 +379,9 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       if (name) updateData.name = name.trim();
       if (category) updateData.category = new mongoose.Types.ObjectId(category);
       if (price !== undefined) updateData.price = Number(price);
-      if (stock !== undefined) updateData.stock = Number(stock);
       if (status) updateData.status = status as "active" | "inactive";
       if (imageUrl) updateData.image = imageUrl;
       if (description !== undefined) updateData.description = description.trim();
-      const parsedSpecs = parseJsonArray(specifications);
-      if (parsedSpecs) updateData.specifications = parsedSpecs;
-      if (shippingInfo !== undefined) updateData.shippingInfo = String(shippingInfo).trim();
-      const parsedReviews = parseJsonArray(reviews);
-      if (parsedReviews) updateData.reviews = parsedReviews;
 
       const updatedProduct = await productRepository.updateModel(productId, updateData);
 

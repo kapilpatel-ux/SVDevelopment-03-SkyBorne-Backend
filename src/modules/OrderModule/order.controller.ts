@@ -4,8 +4,6 @@ import Order from "./order.model";
 import Product from "../ProductModule/product.models";
 import Customer from "../CustomerModule/customer.model";
 import User from "../UserModule/models/User";
-import EcomPayment from "../EcomPaymentModule/Ecompayment.model";
-import { EcomStripeService } from "../../services/EcomStripe.service";
 
 export class OrderController {
   /* ============================= */
@@ -334,34 +332,16 @@ export class OrderController {
           .populate("userId", "firstName lastName email")
           .sort({ createdAt: -1 })
           .skip(skip)
-          .limit(limit)
-          .lean(),
+          .limit(limit),
         Order.countDocuments(filters),
       ]);
-
-      const orderIds = orders.map((order: any) => order._id);
-      const payments = orderIds.length
-        ? await EcomPayment.find({ orderId: { $in: orderIds } })
-            .select("orderId stripePaymentIntentId")
-            .lean()
-        : [];
-
-      const paymentByOrderId = new Map(
-        payments.map((payment: any) => [String(payment.orderId), payment.stripePaymentIntentId])
-      );
-
-      const ordersWithStripe = orders.map((order: any) => ({
-        ...order,
-        stripePaymentIntentId:
-          order.stripePaymentIntentId || paymentByOrderId.get(String(order._id)),
-      }));
 
       console.log("✅ [GetAllOrders] Orders found:", orders.length);
       console.log("✅ [GetAllOrders] Total count:", total);
 
       return res.status(200).json({
         success: true,
-        data: ordersWithStripe,
+        data: orders,
         pagination: {
           page,
           limit,
@@ -433,262 +413,6 @@ export class OrderController {
     }
   };
 
-  /* ============================= */
-  /* CANCEL ORDER (USER) */
-  /* ============================= */
-  cancelOrder = async (req: Request, res: Response) => {
-    let session: mongoose.ClientSession | null = null;
-    const { orderId } = req.params;
-
-    const runCancel = async (activeSession?: mongoose.ClientSession) => {
-      const orderQuery = Order.findById(orderId);
-      const order: any = activeSession ? await orderQuery.session(activeSession) : await orderQuery;
-
-      if (!order) {
-        return { status: 404, message: "Order not found" };
-      }
-
-      const userId = req.user?.id;
-      if (order.userId?.toString() !== userId && req.user?.role !== "admin") {
-        return { status: 403, message: "You don't have permission to cancel this order" };
-      }
-
-      if (String(order.orderStatus || "").toLowerCase() !== "pending") {
-        return { status: 400, message: "Only pending orders can be cancelled" };
-      }
-
-      // Restore stock for each item
-      if (Array.isArray(order.items)) {
-        for (const item of order.items) {
-          const productQuery = Product.findById(item.product);
-          const product = activeSession ? await productQuery.session(activeSession) : await productQuery;
-          if (product) {
-            (product as any).stock = ((product as any).stock || 0) + item.quantity;
-            if (activeSession) {
-              await product.save({ session: activeSession });
-            } else {
-              await product.save();
-            }
-          }
-        }
-      }
-
-      order.orderStatus = "Cancelled";
-      if (activeSession) {
-        await order.save({ session: activeSession });
-      } else {
-        await order.save();
-      }
-
-      return { status: 200, order };
-    };
-
-    try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized",
-        });
-      }
-
-      if (!mongoose.Types.ObjectId.isValid(orderId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid order ID format",
-        });
-      }
-
-      session = await mongoose.startSession();
-      session.startTransaction();
-
-      const txnResult = await runCancel(session);
-      if (txnResult.status !== 200) {
-        await session.abortTransaction();
-        session.endSession();
-        return res.status(txnResult.status).json({
-          success: false,
-          message: txnResult.message,
-        });
-      }
-
-      await session.commitTransaction();
-      session.endSession();
-
-      return res.status(200).json({
-        success: true,
-        message: "Order cancelled successfully",
-        data: txnResult.order,
-      });
-    } catch (error: any) {
-      const message = error?.message ?? "";
-      const isTxnError =
-        /Transaction numbers are only allowed|replica set member|mongos|not running with --replSet/i.test(message);
-
-      if (session) {
-        try {
-          if (session.inTransaction()) {
-            await session.abortTransaction();
-          }
-        } catch (abortError) {
-          console.warn("⚠️ [CancelOrder] Failed to abort transaction:", (abortError as any)?.message);
-        }
-        session.endSession();
-      }
-
-      if (isTxnError) {
-        try {
-          const fallbackResult = await runCancel();
-
-          if (fallbackResult.status !== 200) {
-            return res.status(fallbackResult.status).json({
-              success: false,
-              message: fallbackResult.message,
-            });
-          }
-
-          return res.status(200).json({
-            success: true,
-            message: "Order cancelled successfully",
-            data: fallbackResult.order,
-          });
-        } catch (fallbackError: any) {
-          return res.status(400).json({
-            success: false,
-            message: fallbackError.message || "Failed to cancel order",
-          });
-        }
-      }
-
-      return res.status(400).json({
-        success: false,
-        message: message || "Failed to cancel order",
-      });
-    }
-  };
-
-  /* ============================= */
-  /* REFUND ORDER (ADMIN) */
-  /* ============================= */
-  refundOrder = async (req: Request, res: Response) => {
-    try {
-      if (!req.user) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized",
-        });
-      }
-
-      const { orderId } = req.params;
-      const requestedAmount = Number(req.body?.amount);
-
-      if (!mongoose.Types.ObjectId.isValid(orderId)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid order ID format",
-        });
-      }
-
-      const order: any = await Order.findById(orderId);
-      if (!order) {
-        return res.status(404).json({
-          success: false,
-          message: "Order not found",
-        });
-      }
-
-      if (String(order.orderStatus || "").toLowerCase() !== "cancelled") {
-        return res.status(400).json({
-          success: false,
-          message: "Only cancelled orders can be refunded",
-        });
-      }
-
-      if (String(order.paymentStatus || "").toLowerCase() === "refunded") {
-        return res.status(400).json({
-          success: false,
-          message: "Order already refunded",
-        });
-      }
-
-      if (String(order.paymentStatus || "").toLowerCase() !== "paid") {
-        return res.status(400).json({
-          success: false,
-          message: "Only paid orders can be refunded",
-        });
-      }
-
-      if (String(order.paymentMethod || "").toLowerCase() !== "stripe") {
-        return res.status(400).json({
-          success: false,
-          message: "Refunds are only supported for Stripe payments",
-        });
-      }
-
-      const payment = await EcomPayment.findOne({ orderId: order._id });
-      if (!payment || !payment.stripePaymentIntentId) {
-        return res.status(404).json({
-          success: false,
-          message: "Payment record not found for this order",
-        });
-      }
-
-      if (String(payment.status || "").toLowerCase() === "refunded") {
-        return res.status(400).json({
-          success: false,
-          message: "Payment already refunded",
-        });
-      }
-
-      const fallbackCents = Math.round((order.totalAmount || 0) * 100);
-      const maxRefundCents =
-        typeof payment.amountInCents === "number" && payment.amountInCents > 0
-          ? payment.amountInCents
-          : fallbackCents;
-
-      let refundAmountCents = maxRefundCents;
-      if (Number.isFinite(requestedAmount) && requestedAmount > 0) {
-        refundAmountCents = Math.round(requestedAmount * 100);
-      }
-
-      if (refundAmountCents > maxRefundCents) {
-        return res.status(400).json({
-          success: false,
-          message: "Refund amount exceeds captured payment amount",
-        });
-      }
-
-      const refund = await EcomStripeService.refundPaymentIntent(
-        payment.stripePaymentIntentId,
-        refundAmountCents === maxRefundCents ? undefined : refundAmountCents
-      );
-
-      payment.status = "refunded";
-      payment.metadata = {
-        ...(payment.metadata || {}),
-        refundId: refund.id,
-        refundedAt: new Date().toISOString(),
-        refundAmount: refund.amount,
-        refundCurrency: refund.currency,
-      };
-      await payment.save();
-
-      order.paymentStatus = "Refunded";
-      await order.save();
-
-      return res.status(200).json({
-        success: true,
-        message: "Refund processed successfully",
-        data: order,
-      });
-    } catch (error: any) {
-      console.error("❌ [RefundOrder] Error:", error?.message || error);
-      return res.status(400).json({
-        success: false,
-        message: error?.message || "Failed to refund order",
-      });
-    }
-  };
-
   /**
    * Get single order by ID
    * GET /orders/:orderId
@@ -733,31 +457,6 @@ export class OrderController {
           success: false,
           message: "Order not found",
         });
-      }
-
-      if (
-        (!order.items || order.items.length === 0) &&
-        order.stripePaymentIntentId
-      ) {
-        try {
-          const rebuilt = await EcomStripeService.rebuildOrderItemsFromPaymentIntent(
-            order.stripePaymentIntentId
-          );
-          if (rebuilt?.items?.length) {
-            await Order.findByIdAndUpdate(order._id, {
-              items: rebuilt.items,
-              subtotal: rebuilt.subtotal,
-            });
-            order.items = rebuilt.items;
-            order.subtotal = rebuilt.subtotal;
-            console.log("✅ [GetOrderById] Rebuilt order items from Stripe:", order._id);
-          }
-        } catch (err: any) {
-          console.warn("⚠️ [GetOrderById] Failed to rebuild items from Stripe:", {
-            orderId: order._id,
-            message: err?.message || err,
-          });
-        }
       }
 
       console.log("✅ [GetOrderById] Order found:", order._id);

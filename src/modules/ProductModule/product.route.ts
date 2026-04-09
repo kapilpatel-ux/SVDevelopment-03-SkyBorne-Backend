@@ -47,13 +47,6 @@ export const ProductRoute = [
     method: "get",
   },
 
-  {
-    path: "/products/:productId/reviews",
-    request: null,
-    action: _productController.addProductReview,
-    method: "post",
-  },
-
   // =============================
   // POST ROUTES
   // =============================

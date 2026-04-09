@@ -35,3 +35,4 @@ temp/
 
 # Firebase credentials
 !firebase-service-account.example.json
+firebase-service-account.json
