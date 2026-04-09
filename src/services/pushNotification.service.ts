@@ -410,15 +410,15 @@ export class PushNotificationService {
     const userIds = await this.resolveUserIdsByRegion(params.region);
 
     const titleMap = {
-      created: "Meeting scheduled",
-      rescheduled: "Meeting updated",
-      cancelled: "Meeting cancelled",
+      created: "🚨 Meeting Update Alert",
+      rescheduled: "🚨 Meeting Update Alert",
+      cancelled: "🚨 Meeting Update Alert",
     };
 
     const bodyMap = {
-      created: `${params.meetingTitle} has been scheduled for your region (${params.region}).`,
-      rescheduled: `${params.meetingTitle} has been rescheduled for your region (${params.region}).`,
-      cancelled: `${params.meetingTitle} has been cancelled for your region (${params.region}).`,
+      created: `Good news! ${params.meetingTitle} in your region (${params.region}) has been created${params.localTime ? ` for ${params.localTime.toLocaleString()}` : ""}. Stay tuned and don’t miss out 📍`,
+      rescheduled: `Good news! ${params.meetingTitle} in your region (${params.region}) has been rescheduled${params.localTime ? ` to ${params.localTime.toLocaleString()}` : ""}. Stay tuned and don’t miss out 📍`,
+      cancelled: `Good news! ${params.meetingTitle} in your region (${params.region}) has been cancelled. Stay tuned and don’t miss out 📍`,
     };
 
     return this.sendToUsers(
@@ -452,15 +452,15 @@ export class PushNotificationService {
     const userIds = await this.resolveUserIdsByMeeting(params.meetingId);
 
     const titleMap = {
-      created: "Class scheduled",
-      rescheduled: "Class updated",
-      cancelled: "Class cancelled",
+      created: "🔔 Your Meeting Update",
+      rescheduled: "🔔 Your Meeting Update",
+      cancelled: "🔔 Your Meeting Update",
     };
 
     const bodyMap = {
-      created: `${params.meetingTitle} has been scheduled.`,
-      rescheduled: `${params.meetingTitle} has been updated.`,
-      cancelled: `${params.meetingTitle} has been cancelled.`,
+      created: `Hi there, your meeting ${params.meetingTitle} has been created${params.localTime ? ` for ${params.localTime.toLocaleString()}` : ""}. Check the details and stay prepared 💼✨`,
+      rescheduled: `Hi there, your meeting ${params.meetingTitle} has been rescheduled${params.localTime ? ` to ${params.localTime.toLocaleString()}` : ""}. Check the details and stay prepared 💼✨`,
+      cancelled: `Hi there, your meeting ${params.meetingTitle} has been cancelled. Check the details and stay prepared 💼✨`,
     };
 
     if (!userIds.length) {
@@ -514,8 +514,8 @@ export class PushNotificationService {
     const result = await this.sendToUsers(
       userIds,
       {
-        title: "Upcoming session reminder",
-        body: `${params.meetingTitle} starts in ${params.minutesBefore} minutes.`,
+        title: "Almost time to move! 🕒",
+        body: `Hey there, ${params.meetingTitle} starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). Get ready to make the most of it 💡`,
         highPriority: true,
         data: {
           type: "meeting.reminder",
@@ -568,8 +568,8 @@ export class PushNotificationService {
     return this.sendToUsers(
       userIds,
       {
-        title: "Upcoming session reminder",
-        body: `${params.meetingTitle} starts in ${params.minutesBefore} minutes.`,
+        title: "🎯 Almost Time!",
+        body: `${params.meetingTitle} is just around the corner and starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). We’re excited to have you there 🚀`,
         highPriority: true,
         data: {
           type: "meeting.reminder",
@@ -599,8 +599,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Subscription expiring soon",
-        body: `Your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""}.`,
+        title: "⚠️ Don’t Miss Out!",
+        body: `Hey there, your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}). Renew now to keep enjoying all the benefits 💎`,
         highPriority: false,
         data: {
           type: "subscription.expiry",
@@ -621,8 +621,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Welcome to Skyborne",
-        body: `Hi ${firstName || "there"}, your account is ready.`,
+        title: "🎉 Welcome Aboard!",
+        body: `Hi ${firstName || "there"}, welcome to the family! We’re thrilled to have you with us 🤗`,
         highPriority: true,
         data: { type: "account.welcome" },
       },
@@ -637,8 +637,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Password reset requested",
-        body: "We received a request to reset your password.",
+        title: "🔐 Security Check",
+        body: "We received a password reset request. If this was you, go ahead and proceed. If not, please secure your account immediately ⚡",
         highPriority: true,
         data: { type: "security.password_reset_requested" },
       },
@@ -653,8 +653,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Password updated",
-        body: "Your account password was changed successfully.",
+        title: "✅ Password Updated",
+        body: "Your password has been successfully changed. You’re all set and secure 🔒",
         highPriority: true,
         data: { type: "security.password_changed" },
       },
@@ -675,13 +675,18 @@ export class PushNotificationService {
       invoiceId?: string;
     },
   ) {
-    const statusText = params.success ? "successful" : "failed";
+    const paymentAmount =
+      params.amount !== undefined && params.amount !== null
+        ? `${params.currency || ""} ${params.amount}`.trim()
+        : "";
 
     return this.sendToUser(
       userId,
       {
-        title: params.success ? "Payment successful" : "Payment failed",
-        body: `Your payment was ${statusText}${params.plan ? ` for ${params.plan}` : ""}.`,
+        title: "💳 Payment Update",
+        body: params.success
+          ? `Your payment was successful${paymentAmount ? ` (${paymentAmount})` : ""}${params.plan ? ` for ${params.plan}` : ""}.`
+          : `Your payment was unsuccessful${paymentAmount ? ` (${paymentAmount})` : ""}${params.plan ? ` for ${params.plan}` : ""}. Please try again to continue enjoying our services 💡`,
         highPriority: true,
         data: {
           type: "payment.status",
@@ -704,8 +709,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Plan updated",
-        body: `Your plan has changed from ${fromPlan} to ${toPlan}.`,
+        title: "🔄 Plan Updated",
+        body: `Awesome! Your plan has been upgraded from ${fromPlan} to ${toPlan}. Enjoy the new features 🎉`,
         highPriority: true,
         data: {
           type: "plan.changed",
@@ -728,8 +733,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Booking confirmed",
-        body: `Your booking for ${params.meetingTitle} is confirmed.`,
+        title: "📌 Booking Confirmed",
+        body: `Your booking for ${params.meetingTitle} is confirmed${params.localTime ? ` at ${params.localTime.toLocaleString()}` : ""}! We’re excited to serve you. See you soon 😊`,
         highPriority: true,
         data: {
           type: "booking.confirmed",
@@ -755,8 +760,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "Booking cancelled",
-        body: `Your booking for ${params.meetingTitle} was cancelled.`,
+        title: "❌ Booking Cancelled",
+        body: `Your booking for ${params.meetingTitle} has been successfully cancelled${params.localTime ? ` (scheduled at ${params.localTime.toLocaleString()})` : ""}. Hope to see you again soon 💙`,
         highPriority: true,
         data: {
           type: "booking.cancelled",
@@ -776,11 +781,19 @@ export class PushNotificationService {
   }
 
   static async sendBroadcastOptIn(payload: PushPayload) {
+    const normalizedPayload: PushPayload = {
+      title: payload.title || "📢 Big News!",
+      body:
+        payload.body || "Hey there, don’t miss out on this exciting update! Check it out now and stay ahead 🚀",
+      data: payload.data,
+      highPriority: payload.highPriority,
+    };
+
     const tokenDocs = await DeviceToken.find({ isActive: true, optInBroadcast: true }).select(
       "token",
     );
     const tokens = tokenDocs.map((item) => item.token).filter(Boolean);
-    const result = await this.sendMulticast(tokens, payload);
+    const result = await this.sendMulticast(tokens, normalizedPayload);
 
     if (result.invalidTokens.length > 0) {
       await DeviceToken.updateMany(
@@ -792,12 +805,12 @@ export class PushNotificationService {
     await PushNotificationLog.create({
       eventType: "broadcast.admin",
       category: "broadcast",
-      title: payload.title,
-      body: payload.body,
+      title: normalizedPayload.title,
+      body: normalizedPayload.body,
       tokenCount: tokens.length,
       successCount: result.successCount,
       failureCount: result.failureCount,
-      metadata: payload.data || null,
+      metadata: normalizedPayload.data || null,
       sentAt: new Date(),
     });
 
