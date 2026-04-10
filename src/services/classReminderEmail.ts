@@ -44,6 +44,7 @@ const getTimezoneDisplayLabel = (timezone: string): string => {
 const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
+  meetingId: string,
   region: string,
   localTime: string,
   localDate: string,
@@ -52,6 +53,11 @@ const getClassReminderEmailHTML = (
   duration: number,
   reminderOffsetMinutes: number,
 ): string => {  
+  const normalizedMeetingId = encodeURIComponent(String(meetingId || "").trim());
+  const appDeepLink = `skybornedrop://class/${normalizedMeetingId}`;
+  const dashboardUrl = String(process.env.DASHBOARD_URL || "https://www.skybornedrop.com").replace(/\/+$/, "");
+  const webSessionLink = `${dashboardUrl}/class/${normalizedMeetingId}`;
+
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -284,10 +290,15 @@ const getClassReminderEmailHTML = (
             
             <!-- Call to Action Button -->
             <div class="cta-section">
-                <a href="${process.env.DASHBOARD_URL}" class="cta-button">
-                    View Class Details
+              <a href="${appDeepLink}" class="cta-button">
+                Open in Skyborne App
                 </a>
             </div>
+
+            <p class="greeting" style="font-size: 13px; color: #777; text-align: center; margin-top: 6px;">
+              If the app link does not open, use this link:
+              <a href="${webSessionLink}" style="color: #c94a7f; text-decoration: underline;">View Class Details</a>
+            </p>
             
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
                 If you have any questions, feel free to contact our support team.
@@ -339,6 +350,7 @@ const formatRegionDate = (rawDate: string, timezone: string = "UTC"): string => 
 // Process the queue
 classReminderEmailQueue.process(async (job: any) => {
   const {
+    meetingId,
     userEmails,
     meetingTitle,
     region,
@@ -361,189 +373,135 @@ classReminderEmailQueue.process(async (job: any) => {
     return new Date(NaN);
   };
   const meetingStartDate = resolveValidMeetingStartDate();
-  const normalizedUsers = Array.isArray(userEmails) ? userEmails : [];
-  const uniqueUserEmailsMap = new Map<string, (typeof normalizedUsers)[number]>();
-  for (const user of normalizedUsers) {
-    const emailKey = String(user?.email || "").trim().toLowerCase();
-    if (!emailKey) continue;
-    if (!uniqueUserEmailsMap.has(emailKey)) {
-      uniqueUserEmailsMap.set(emailKey, user);
-    }
-  }
-  const uniqueUserEmails = Array.from(uniqueUserEmailsMap.values());
-  if (uniqueUserEmails.length !== normalizedUsers.length) {
-    console.warn(
-      `⚠️ Deduped class reminder recipients from ${normalizedUsers.length} to ${uniqueUserEmails.length}`,
-    );
-  }
-  let mailLogWritten = false;
 
   try {
     // Send email to all users in the region
     if (isNaN(meetingStartDate.getTime())) {
       throw new Error("Invalid class start time in reminder job payload");
     }
-    const emailResults = await Promise.all(
-      uniqueUserEmails.map(async (user: any) => {
-        const countryCode = String(user?.countryCode || "")
-          .trim()
-          .toUpperCase();
-        const userTimeZone = COUNTRY_TIMEZONE_MAP[countryCode] || "UTC";
-        const resolvedRegionTimeZone = String(regionTimeZone || "").trim();
-        const resolvedRegionLocalTime = String(regionLocalTime || "").trim();
-        const resolvedRegionLocalDate = String(regionLocalDate || "").trim();
-        const useRegionTimeZone = Boolean(resolvedRegionTimeZone);
-        const timezone = useRegionTimeZone ? resolvedRegionTimeZone : userTimeZone;
-        const timezoneDisplay = getTimezoneDisplayLabel(timezone);
-        let displayTimeZone = timezone;
-        let localTime = "TBD";
-        let localDate = "TBD";
+    const emailPromises = userEmails.map((user: any) => {
+      const countryCode = String(user?.countryCode || "").trim().toUpperCase();
+      const userTimeZone = COUNTRY_TIMEZONE_MAP[countryCode] || "UTC";
+      const resolvedRegionTimeZone = String(regionTimeZone || "").trim();
+      const resolvedRegionLocalTime = String(regionLocalTime || "").trim();
+      const resolvedRegionLocalDate = String(regionLocalDate || "").trim();
+      const useRegionTimeZone = Boolean(resolvedRegionTimeZone);
+      const timezone = useRegionTimeZone ? resolvedRegionTimeZone : userTimeZone;
+      const timezoneDisplay = getTimezoneDisplayLabel(timezone);
+      let displayTimeZone = timezone;
+      let localTime = "TBD";
+      let localDate = "TBD";
 
-        if (!isNaN(meetingStartDate.getTime())) {
-          try {
-            localTime = meetingStartDate.toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: true,
-              timeZone: timezone,
-            });
-            localDate = meetingStartDate.toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              timeZone: timezone,
-            });
-          } catch (formatErr: any) {
-            console.warn(
-              `⚠️ Failed to format reminder date/time for timezone ${timezone}. Falling back to UTC.`,
-              formatErr?.message || formatErr,
-            );
-            displayTimeZone = "UTC";
-            localTime = meetingStartDate.toLocaleTimeString("en-US", {
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: true,
-              timeZone: "UTC",
-            });
-            localDate = meetingStartDate.toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "short",
-              day: "numeric",
-              timeZone: "UTC",
-            });
-          }
+      if (!isNaN(meetingStartDate.getTime())) {
+        try {
+          localTime = meetingStartDate.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: timezone,
+          });
+          localDate = meetingStartDate.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            timeZone: timezone,
+          });
+        } catch (formatErr: any) {
+          console.warn(
+            `⚠️ Failed to format reminder date/time for timezone ${timezone}. Falling back to UTC.`,
+            formatErr?.message || formatErr,
+          );
+          displayTimeZone = "UTC";
+          localTime = meetingStartDate.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: "UTC",
+          });
+          localDate = meetingStartDate.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            timeZone: "UTC",
+          });
         }
+      }
 
-        if (useRegionTimeZone) {
-          if (resolvedRegionLocalTime) {
-            localTime = resolvedRegionLocalTime;
-          }
-          if (resolvedRegionLocalDate) {
-            localDate = formatRegionDate(resolvedRegionLocalDate);
-          }
-        } else if (resolvedRegionLocalDate && localDate === "TBD") {
+      if (useRegionTimeZone) {
+        if (resolvedRegionLocalTime) {
+          localTime = resolvedRegionLocalTime;
+        }
+        if (resolvedRegionLocalDate) {
           localDate = formatRegionDate(resolvedRegionLocalDate);
         }
+      } else if (resolvedRegionLocalDate && localDate === "TBD") {
+        localDate = formatRegionDate(resolvedRegionLocalDate);
+      }
 
-        if (/invalid date/i.test(localDate)) {
-          localDate = meetingStartDate.toISOString().split("T")[0];
-        }
-        if (/invalid date/i.test(localTime)) {
-          localTime = "TBD";
-        }
+      if (/invalid date/i.test(localDate)) {
+        localDate = meetingStartDate.toISOString().split("T")[0];
+      }
+      if (/invalid date/i.test(localTime)) {
+        localTime = "TBD";
+      }
 
-        const htmlContent = getClassReminderEmailHTML(
-          user.firstName,
-          meetingTitle,
-          region,
-          localTime,
-          localDate,
-          getTimezoneDisplayLabel(displayTimeZone || timezoneDisplay),
-          trainerName,
-          duration,
-          reminderOffsetMinutes,
-        );
+      const htmlContent = getClassReminderEmailHTML(
+        user.firstName,
+        meetingTitle,
+        String(meetingId || "").trim(),
+        region,
+        localTime,
+        localDate,
+        getTimezoneDisplayLabel(displayTimeZone || timezoneDisplay),
+        trainerName,
+        duration,
+        reminderOffsetMinutes,
+      );
 
-        const msg = {
-          to: user.email,
-          from: process.env.SENDGRID_FROM_EMAIL as string,
-          subject: `⏰ Reminder: ${meetingTitle} starts in ${
-            reminderOffsetMinutes >= 60
-              ? `${Math.round(reminderOffsetMinutes / 60)} hours`
-              : `${reminderOffsetMinutes} minutes`
-          }!`,
-          html: htmlContent,
-        };
+      const msg = {
+        to: user.email,
+        from: process.env.SENDGRID_FROM_EMAIL as string,
+        subject: `⏰ Reminder: ${meetingTitle} starts in ${
+          reminderOffsetMinutes >= 60
+            ? `${Math.round(reminderOffsetMinutes / 60)} hours`
+            : `${reminderOffsetMinutes} minutes`
+        }!`,
+        html: htmlContent,
+      };
 
-        try {
-          await sgMail.send(msg);
-          return { email: user.email, success: true };
-        } catch (sendError: any) {
-          return { email: user.email, success: false, error: sendError };
-        }
-      })
-    );
+      return sgMail.send(msg);
+    });
 
-    const failures = emailResults.filter((result) => !result.success);
-    const successCount = emailResults.length - failures.length;
-    const failureCount = failures.length;
+    // Wait for all emails to be sent
+    await Promise.all(emailPromises);
 
     await MailLog.create({
       meetingId: String(job?.data?.meetingId || "").trim() || undefined,
       meetingTitle: meetingTitle || "Untitled Meeting",
       meetingTime: meetingStartDate,
       sentAt: new Date(),
-      totalUsers: uniqueUserEmails.length,
-      status: failureCount === 0 ? "success" : "failed",
+      totalUsers: Array.isArray(userEmails) ? userEmails.length : 0,
+      status: "success",
     });
-    mailLogWritten = true;
-
-    if (failureCount > 0) {
-      console.error(
-        `❌ Class reminder email failures: ${failureCount} of ${emailResults.length}`,
-      );
-      const sampleError = failures[0]?.error;
-      if (sampleError?.message) {
-        console.error("Sample error:", sampleError.message);
-      }
-      if (sampleError?.response?.body) {
-        console.error(
-          "🔍 SendGrid Error Body:",
-          JSON.stringify(sampleError.response.body, null, 2),
-        );
-      }
-    }
 
     console.log(
-      `✅ Class reminder emails sent to ${successCount} users for class: ${meetingTitle}`,
+      `✅ Class reminder emails sent to ${userEmails.length} users for class: ${meetingTitle}`,
     );
 
-    if (successCount === 0) {
-      throw new Error("All class reminder emails failed to send");
-    }
-
-    return {
-      success: failureCount === 0,
-      emailsSent: successCount,
-      failures: failureCount,
-    };
+    return { success: true, emailsSent: userEmails.length };
   } catch (err: any) {
     console.error(`❌ Email send failed for class reminder`);
     console.error("Error Message:", err.message);
 
     try {
-      if (!mailLogWritten) {
-        await MailLog.create({
-          meetingId: String(job?.data?.meetingId || "").trim() || undefined,
-          meetingTitle: meetingTitle || "Untitled Meeting",
-          meetingTime: isNaN(meetingStartDate.getTime())
-            ? new Date()
-            : meetingStartDate,
-          sentAt: new Date(),
-        totalUsers: uniqueUserEmails.length,
-          status: "failed",
-        });
-      }
+      await MailLog.create({
+        meetingId: String(job?.data?.meetingId || "").trim() || undefined,
+        meetingTitle: meetingTitle || "Untitled Meeting",
+        meetingTime: isNaN(meetingStartDate.getTime()) ? new Date() : meetingStartDate,
+        sentAt: new Date(),
+        totalUsers: Array.isArray(userEmails) ? userEmails.length : 0,
+        status: "failed",
+      });
     } catch (mailLogError: any) {
       console.error(
         "❌ Failed to store failed mail log:",
