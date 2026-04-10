@@ -203,8 +203,9 @@ const getClassReminderEmailHTML = (
                 <a href="${webLink}" class="cta-button primary" style="background-color: #c94a7f; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; display: inline-block;">
                     Join Class
                 </a>
-                <a href="${webLink}" class="cta-button secondary" style="background-color: #ffffff; color: #c94a7f; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; border: 2px solid #c94a7f; display: inline-block;">
-                    View Details
+                
+                <a href="${appDeepLink}" class="cta-button primary" style="background-color: #c94a7f; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; display: inline-block;">
+                    View Details In App
                 </a>
             </div>
             
