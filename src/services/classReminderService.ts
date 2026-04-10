@@ -207,6 +207,24 @@ static async getCountriesByRegion(regionName: string) {
         countryCode: user.countryCode || "",
       }));
 
+      const uniqueEmailsMap = new Map<string, (typeof userEmails)[number]>();
+      for (const entry of userEmails) {
+        const emailKey = String(entry.email || "").trim().toLowerCase();
+        if (!emailKey) continue;
+        if (!uniqueEmailsMap.has(emailKey)) {
+          uniqueEmailsMap.set(emailKey, entry);
+        }
+      }
+      const uniqueUserEmails = Array.from(uniqueEmailsMap.values());
+
+      if (uniqueUserEmails.length !== userEmails.length) {
+        console.warn(
+          `[ClassReminderService] sendClassReminder:dedupe-emails removed ${
+            userEmails.length - uniqueUserEmails.length
+          } duplicate emails`,
+        );
+      }
+
       // Get trainer name
       const trainerName = (meeting.trainer as any)?.name || "Your Trainer";
       const { regionTimeZone, regionLocalTime, regionLocalDate } =
@@ -215,7 +233,7 @@ static async getCountriesByRegion(regionName: string) {
       console.log("[ClassReminderService] sendClassReminder:queue-job", {
         meetingId: (meeting._id as string).toString(),
         region,
-        usersCount: userEmails.length,
+        usersCount: uniqueUserEmails.length,
         trainerName,
       });
 
@@ -232,10 +250,10 @@ static async getCountriesByRegion(regionName: string) {
         regionLocalDate,
         duration: meeting.duration,
         trainerName: trainerName,
-        userEmails: userEmails,
+        userEmails: uniqueUserEmails,
       });
 
-      const pushUserIds = userEmails
+      const pushUserIds = uniqueUserEmails
         .map((entry: any) => String(entry.userId || "").trim())
         .filter(Boolean);
 
@@ -259,13 +277,13 @@ static async getCountriesByRegion(regionName: string) {
       }
 
       console.log(
-        `✅ Class reminder job queued for ${userEmails.length} users. Meeting: ${meeting.title}`
+        `✅ Class reminder job queued for ${uniqueUserEmails.length} users. Meeting: ${meeting.title}`
       );
 
       return {
         success: true,
-        message: `Reminder emails queued for ${userEmails.length} users`,
-        emailsSent: userEmails.length,
+        message: `Reminder emails queued for ${uniqueUserEmails.length} users`,
+        emailsSent: uniqueUserEmails.length,
       };
     } catch (error) {
       console.error(`❌ Error sending class reminder:`, error);
@@ -322,6 +340,24 @@ static async getCountriesByRegion(regionName: string) {
         countryCode: user.countryCode || "",
       }));
 
+      const uniqueEmailsMap = new Map<string, (typeof userEmails)[number]>();
+      for (const entry of userEmails) {
+        const emailKey = String(entry.email || "").trim().toLowerCase();
+        if (!emailKey) continue;
+        if (!uniqueEmailsMap.has(emailKey)) {
+          uniqueEmailsMap.set(emailKey, entry);
+        }
+      }
+      const uniqueUserEmails = Array.from(uniqueEmailsMap.values());
+
+      if (uniqueUserEmails.length !== userEmails.length) {
+        console.warn(
+          `[ClassReminderService] sendImmediateClassReminder:dedupe-emails removed ${
+            userEmails.length - uniqueUserEmails.length
+          } duplicate emails`,
+        );
+      }
+
       const trainerName = (meeting.trainer as any)?.name || "Your Trainer";
       const { regionTimeZone, regionLocalTime, regionLocalDate } =
         resolveMeetingRegionDetails(meeting);
@@ -329,7 +365,7 @@ static async getCountriesByRegion(regionName: string) {
       console.log("[ClassReminderService] sendImmediateClassReminder:queue-job", {
         meetingId: (meeting._id as string).toString(),
         region,
-        usersCount: userEmails.length,
+        usersCount: uniqueUserEmails.length,
         trainerName,
       });
 
@@ -346,18 +382,18 @@ static async getCountriesByRegion(regionName: string) {
         regionLocalDate,
         duration: meeting.duration,
         trainerName: trainerName,
-        userEmails: userEmails,
+        userEmails: uniqueUserEmails,
       });
 
       console.log("[ClassReminderService] sendImmediateClassReminder:queued", {
         meetingId: (meeting._id as string).toString(),
-        usersCount: userEmails.length,
+        usersCount: uniqueUserEmails.length,
       });
 
       return {
         success: true,
-        message: `Reminder emails queued for ${userEmails.length} users`,
-        emailsSent: userEmails.length,
+        message: `Reminder emails queued for ${uniqueUserEmails.length} users`,
+        emailsSent: uniqueUserEmails.length,
       };
     } catch (error) {
       console.error(`❌ Error sending immediate class reminder:`, error);

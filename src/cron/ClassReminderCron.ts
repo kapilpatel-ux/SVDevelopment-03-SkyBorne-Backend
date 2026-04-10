@@ -43,17 +43,25 @@ export const startClassReminderCron = () => {
         }
 
         for (const meeting of upcomingMeetings) {
+          let claimed = false;
           try {
+            const claim = await Meeting.findOneAndUpdate(
+              { _id: meeting._id, [reminder.flag]: { $ne: true } },
+              { $set: { [reminder.flag]: true } },
+            ).select("_id");
+
+            if (!claim) {
+              console.log(
+                `⏭️ Skipping ${reminder.minutesBefore} minute reminder for meeting ${meeting._id} (already claimed)`,
+              );
+              continue;
+            }
+            claimed = true;
+
             await ClassReminderService.sendClassReminder(
               (meeting._id as string).toString(),
               reminder.minutesBefore,
             );
-
-            const updateData: Record<string, boolean> = {
-              [reminder.flag]: true,
-            };
-
-            await Meeting.updateOne({ _id: meeting._id }, updateData);
 
             console.log(
               `✅ ${reminder.minutesBefore} minute reminder sent and marked for meeting ${meeting._id}`,
@@ -63,6 +71,12 @@ export const startClassReminderCron = () => {
               `❌ Error processing ${reminder.minutesBefore} minute reminder for meeting ${meeting._id}:`,
               error,
             );
+            if (claimed) {
+              await Meeting.updateOne(
+                { _id: meeting._id },
+                { $set: { [reminder.flag]: false } },
+              );
+            }
           }
         }
       }

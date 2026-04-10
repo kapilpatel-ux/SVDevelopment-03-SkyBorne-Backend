@@ -361,6 +361,21 @@ classReminderEmailQueue.process(async (job: any) => {
     return new Date(NaN);
   };
   const meetingStartDate = resolveValidMeetingStartDate();
+  const normalizedUsers = Array.isArray(userEmails) ? userEmails : [];
+  const uniqueUserEmailsMap = new Map<string, (typeof normalizedUsers)[number]>();
+  for (const user of normalizedUsers) {
+    const emailKey = String(user?.email || "").trim().toLowerCase();
+    if (!emailKey) continue;
+    if (!uniqueUserEmailsMap.has(emailKey)) {
+      uniqueUserEmailsMap.set(emailKey, user);
+    }
+  }
+  const uniqueUserEmails = Array.from(uniqueUserEmailsMap.values());
+  if (uniqueUserEmails.length !== normalizedUsers.length) {
+    console.warn(
+      `⚠️ Deduped class reminder recipients from ${normalizedUsers.length} to ${uniqueUserEmails.length}`,
+    );
+  }
   let mailLogWritten = false;
 
   try {
@@ -369,7 +384,7 @@ classReminderEmailQueue.process(async (job: any) => {
       throw new Error("Invalid class start time in reminder job payload");
     }
     const emailResults = await Promise.all(
-      userEmails.map(async (user: any) => {
+      uniqueUserEmails.map(async (user: any) => {
         const countryCode = String(user?.countryCode || "")
           .trim()
           .toUpperCase();
@@ -478,7 +493,7 @@ classReminderEmailQueue.process(async (job: any) => {
       meetingTitle: meetingTitle || "Untitled Meeting",
       meetingTime: meetingStartDate,
       sentAt: new Date(),
-      totalUsers: Array.isArray(userEmails) ? userEmails.length : 0,
+      totalUsers: uniqueUserEmails.length,
       status: failureCount === 0 ? "success" : "failed",
     });
     mailLogWritten = true;
@@ -525,7 +540,7 @@ classReminderEmailQueue.process(async (job: any) => {
             ? new Date()
             : meetingStartDate,
           sentAt: new Date(),
-          totalUsers: Array.isArray(userEmails) ? userEmails.length : 0,
+        totalUsers: uniqueUserEmails.length,
           status: "failed",
         });
       }
