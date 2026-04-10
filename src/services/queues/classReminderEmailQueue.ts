@@ -32,6 +32,18 @@ export const classReminderEmailQueue = new Queue<ClassReminderEmailJob>(
   }
 );
 
+const buildClassReminderJobId = (jobData: ClassReminderEmailJob) => {
+  const meetingId = String(jobData.meetingId || "").trim() || "unknown";
+  const reminderOffset =
+    typeof jobData.reminderOffsetMinutes === "number"
+      ? jobData.reminderOffsetMinutes
+      : Number(jobData.reminderOffsetMinutes) || 0;
+  const startCandidate = jobData.classStartAt || jobData.startDate;
+  const startTimestamp = startCandidate ? new Date(startCandidate).getTime() : NaN;
+  const startKey = Number.isFinite(startTimestamp) ? startTimestamp : "unknown";
+  return `class-reminder:${meetingId}:${reminderOffset}:${startKey}`;
+};
+
 // =====================
 // QUEUE EVENT DEBUGGING
 // =====================
@@ -64,7 +76,19 @@ export const addClassReminderEmailJob = async (
   jobData: ClassReminderEmailJob
 ) => {
   try {
+    const jobId = buildClassReminderJobId(jobData);
+
+    const existingJob = await classReminderEmailQueue.getJob(jobId);
+    if (existingJob) {
+      const state = await existingJob.getState();
+      if (state !== "failed") {
+        return existingJob;
+      }
+      await existingJob.remove();
+    }
+
     const job = await classReminderEmailQueue.add(jobData, {
+      jobId,
       attempts: 3,
       backoff: { type: "exponential", delay: 2000 },
       removeOnComplete: true,
@@ -74,6 +98,11 @@ export const addClassReminderEmailJob = async (
 
     return job;
   } catch (error) {
+    const jobId = buildClassReminderJobId(jobData);
+    const existingJob = await classReminderEmailQueue.getJob(jobId);
+    if (existingJob) {
+      return existingJob;
+    }
     console.error("❌ Error adding class reminder job to queue:", error);
     throw error;
   }
