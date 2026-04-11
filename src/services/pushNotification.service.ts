@@ -157,7 +157,14 @@ export class PushNotificationService {
       },
       apns: {
         headers: {
-          "apns-priority": payload.highPriority ? "10" : "5",
+          // For visible notifications, keep APNS at immediate delivery priority.
+          "apns-priority": "10",
+          "apns-push-type": "alert",
+        },
+        payload: {
+          aps: {
+            sound: "default",
+          },
         },
       },
     };
@@ -239,13 +246,26 @@ export class PushNotificationService {
       }
     }
 
-    const tokenDocs = await DeviceToken.find({ userId, isActive: true }).select("token");
-    const tokens = tokenDocs.map((item) => item.token).filter(Boolean);
+    const recipient = await User.findById(userId).select("email firstName lastName").lean();
+    const tokenDocs = await DeviceToken.find({ userId, isActive: true }).select("token platform");
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
 
     console.log("🔔 [PushNotificationService] sendToUser", {
       userId,
+      email: (recipient as any)?.email || null,
+      name: [recipient?.firstName, recipient?.lastName].filter(Boolean).join(" ") || null,
       title: payload.title,
       tokenCount: tokens.length,
+      platformSummary,
+      tokenPrefixes: tokens.slice(0, 5).map((token) => String(token).slice(0, 24)),
       category: options?.category || "transactional",
       eventType: options?.eventType || "push.single",
     });
@@ -297,21 +317,42 @@ export class PushNotificationService {
       return { successCount: 0, failureCount: 0, invalidTokens: [] as string[] };
     }
 
+    const recipientUsers = await User.find({ _id: { $in: userIds } }).select("email firstName lastName").lean();
+    const recipientMap = new Map(
+      recipientUsers.map((user: any) => [String(user?._id), user]),
+    );
     const tokenDocs = await DeviceToken.find({
       userId: { $in: userIds },
       isActive: true,
-    }).select("token userId");
+    }).select("token userId platform");
 
-    const tokens = tokenDocs.map((item) => item.token).filter(Boolean);
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
     const usersWithTokens = new Set(tokenDocs.map((doc) => String(doc.userId)));
     const usersWithoutTokens = userIds.filter((id) => !usersWithTokens.has(id));
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
 
     console.log("🔔 [PushNotificationService] sendToUsers", {
       userCount: userIds.length,
       title: payload.title,
       tokenCount: tokens.length,
+      platformSummary,
       usersWithTokens: usersWithTokens.size,
       usersWithoutTokens: usersWithoutTokens.length,
+      recipients: userIds.slice(0, 20).map((id) => {
+        const user = recipientMap.get(String(id)) as any;
+        return {
+          userId: String(id),
+          email: user?.email || null,
+          name: [user?.firstName, user?.lastName].filter(Boolean).join(" ") || null,
+        };
+      }),
       category: options?.category || "transactional",
       eventType: options?.eventType || "push.bulk",
     });
@@ -790,9 +831,24 @@ export class PushNotificationService {
     };
 
     const tokenDocs = await DeviceToken.find({ isActive: true, optInBroadcast: true }).select(
-      "token",
+      "token platform",
     );
-    const tokens = tokenDocs.map((item) => item.token).filter(Boolean);
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    console.log("🔔 [PushNotificationService] sendBroadcastOptIn", {
+      tokenCount: tokens.length,
+      platformSummary,
+      title: normalizedPayload.title,
+    });
+
     const result = await this.sendMulticast(tokens, normalizedPayload);
 
     if (result.invalidTokens.length > 0) {
