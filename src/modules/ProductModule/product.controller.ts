@@ -23,6 +23,110 @@ const parseJsonArray = (value: any): any[] | undefined => {
   return undefined;
 };
 
+const parseStringArray = (value: any): string[] | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (item === null || item === undefined ? "" : String(item)))
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+  }
+  if (typeof value === "string") {
+    const parsed = parseJsonArray(value);
+    if (parsed) {
+      return parsed
+        .map((item) => (item === null || item === undefined ? "" : String(item)))
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    }
+    return value.trim() ? [value.trim()] : [];
+  }
+  return undefined;
+};
+
+const PRODUCT_MASTER_FIELDS = [
+  "productCategory",
+  "productSubCategory",
+  "productSubtype",
+  "partnerSkuUniqueCode",
+  "modelNumber",
+  "gtinUpc",
+  "brand",
+  "productTitle",
+  "colourName",
+  "setIncludes",
+  "featureBullet1",
+  "featureBullet2",
+  "featureBullet3",
+  "featureBullet4",
+  "featureBullet5",
+  "whatIsInTheBox",
+  "longDescription",
+  "countryOfOrigin",
+  "colourFamily",
+  "size",
+  "sizeUnit",
+  "secondaryMaterial",
+  "materialFinish",
+  "careInstructions",
+  "itemCondition",
+  "grade",
+  "productLength",
+  "productLengthUnit",
+  "productHeight",
+  "productHeightUnit",
+  "productWidthDepth",
+  "productWidthDepthUnit",
+  "productWeight",
+  "productWeightUnit",
+  "numberOfPieces",
+  "shippingLength",
+  "shippingLengthUnit",
+  "shippingHeight",
+  "shippingHeightUnit",
+  "shippingWidthDepth",
+  "shippingWidthDepthUnit",
+  "shippingWeight",
+  "shippingWeightUnit",
+  "recommendedRetailPrice",
+  "recommendedRetailPriceAEUnit",
+  "hsCode",
+] as const;
+
+const assignMasterFields = (target: Partial<IProduct>, source: any) => {
+  PRODUCT_MASTER_FIELDS.forEach((key) => {
+    if (source[key] !== undefined) {
+      target[key] = String(source[key]).trim();
+    }
+  });
+};
+
+const uploadBase64Image = async (imageBase64: string): Promise<string> => {
+  const matches = imageBase64.match(/^data:(.+);base64,(.+)$/);
+  if (!matches) {
+    throw new Error("Invalid imageBase64 format");
+  }
+
+  const mimeType = matches[1];
+  const base64Data = matches[2];
+  const buffer = Buffer.from(base64Data, "base64");
+  const ext = mimeType.split("/")[1] || "jpg";
+  const key = `products/${Date.now()}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}.${ext}`;
+
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: process.env.AWS_S3_BUCKET!,
+      Key: key,
+      Body: buffer,
+      ContentType: mimeType,
+    })
+  );
+
+  return `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+};
+
 export class ProductController {
   /**
    * Get all products with pagination and search
@@ -295,6 +399,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       status = "inactive",
       description = "",
       imageBase64,
+      imageBase64s,
       specifications,
       shippingInfo,
       reviews,
@@ -307,6 +412,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
     console.log("status:", status);
     console.log("description:", description);
     console.log("imageBase64 present:", !!imageBase64);
+    console.log("imageBase64s present:", Array.isArray(imageBase64s));
 
     // ── Required field validation ──────────────────────────────────
     if (!name || !name.trim()) {
@@ -348,11 +454,22 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       }
     }
 
-    if (!imageBase64) {
+    const imageBase64List =
+      parseStringArray(imageBase64s) ?? parseStringArray(imageBase64);
+    if (!imageBase64List || imageBase64List.length === 0) {
       console.log("FAILED: imageBase64 missing");
       return res.status(400).json({ success: false, message: "Product image is required" });
     }
+    if (imageBase64List.length > 5) {
+      return res.status(400).json({ success: false, message: "Maximum 5 images allowed" });
+    }
     console.log("PASSED: imageBase64 present");
+
+    for (const base64 of imageBase64List) {
+      if (!/^data:(.+);base64,(.+)$/.test(base64)) {
+        return res.status(400).json({ success: false, message: "Invalid imageBase64 format" });
+      }
+    }
 
     // ── Category validation (optional) ────────────────────────────
     if (category && !mongoose.Types.ObjectId.isValid(category)) {
@@ -361,7 +478,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
     }
     console.log("PASSED: category validation");
 
-    // ── Upload image to S3 ────────────────────────────────────────
+    // ── Upload images to S3 ───────────────────────────────────────
     console.log("=== S3 UPLOAD START ===");
     console.log("AWS_S3_BUCKET:", process.env.AWS_S3_BUCKET);
     console.log("AWS_REGION:", process.env.AWS_REGION);
@@ -370,34 +487,12 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
     console.log("AWS_SECRET_ACCESS_KEY present:", !!process.env.AWS_SECRET_ACCESS_KEY);
     console.log("AWS_SECRET_ACCESS_KEY length:", process.env.AWS_SECRET_ACCESS_KEY?.length);
 
-    const matches = imageBase64.match(/^data:(.+);base64,(.+)$/);
-    console.log("imageBase64 regex match success:", !!matches);
-    if (!matches) {
-      console.log("FAILED: imageBase64 format invalid, starts with:", imageBase64.substring(0, 50));
-      return res.status(400).json({ success: false, message: "Invalid imageBase64 format" });
-    }
-
-    const mimeType = matches[1];
-    const base64Data = matches[2];
-    const buffer = Buffer.from(base64Data, "base64");
-    const ext = mimeType.split("/")[1];
-    const key = `products/${Date.now()}.${ext}`;
-
-    console.log("mimeType:", mimeType);
-    console.log("ext:", ext);
-    console.log("S3 key:", key);
-    console.log("buffer size:", buffer.length, "bytes");
-    console.log("Attempting s3.send PutObjectCommand...");
-
+    const imageUrls: string[] = [];
     try {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: process.env.AWS_S3_BUCKET!,
-          Key: key,
-          Body: buffer,
-          ContentType: mimeType,
-        })
-      );
+      for (const base64 of imageBase64List) {
+        const url = await uploadBase64Image(base64);
+        imageUrls.push(url);
+      }
       console.log("PASSED: S3 upload success");
     } catch (s3Error: any) {
       console.error("FAILED: S3 upload error");
@@ -408,15 +503,13 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
       throw s3Error;
     }
 
-    const imageUrl = `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-    console.log("imageUrl:", imageUrl);
-
     // ── Build product data ────────────────────────────────────────
     const productData: Partial<IProduct> = {
       name: name.trim(),
       price: parsedPrice,
       status: status as "active" | "inactive",
-      image: imageUrl,
+      image: imageUrls[0],
+      images: imageUrls,
       description: description.trim(),
     };
 
@@ -427,6 +520,8 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
     if (category) {
       productData.category = new mongoose.Types.ObjectId(category);
     }
+
+    assignMasterFields(productData, req.body);
 
     const parsedSpecs = parseJsonArray(specifications);
     if (parsedSpecs) {
@@ -477,6 +572,7 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
         stock,
         status,
         imageBase64,
+        imageBase64s,
         description,
         specifications,
         shippingInfo,
@@ -495,6 +591,9 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
         stock === undefined &&
         !status &&
         !imageBase64 &&
+        !imageBase64s &&
+        req.body.imageUrls === undefined &&
+        req.body.images === undefined &&
         description === undefined &&
         specifications === undefined &&
         shippingInfo === undefined &&
@@ -540,39 +639,52 @@ async createProduct(req: Request, res: Response, next: NextFunction) {
         return res.status(400).json({ success: false, message: "Invalid category ID format" });
       }
 
+      const updateData: Partial<IProduct> = {};
+
       // ── Handle image upload if provided ───────────────────────────
-      let imageUrl: string | undefined;
-      if (imageBase64) {
-        const matches = imageBase64.match(/^data:(.+);base64,(.+)$/);
-        if (!matches) {
-          return res.status(400).json({ success: false, message: "Invalid imageBase64 format" });
+      const imageBase64List =
+        parseStringArray(imageBase64s) ?? parseStringArray(imageBase64);
+      const imageUrls = parseStringArray(req.body.imageUrls ?? req.body.images);
+      if (imageBase64List || imageUrls !== undefined) {
+        if (imageBase64List) {
+          for (const base64 of imageBase64List) {
+            if (!/^data:(.+);base64,(.+)$/.test(base64)) {
+              return res.status(400).json({ success: false, message: "Invalid imageBase64 format" });
+            }
+          }
         }
 
-        const mimeType = matches[1];
-        const buffer = Buffer.from(matches[2], "base64");
-        const key = `products/${Date.now()}.${mimeType.split("/")[1]}`;
+        const uploadedUrls: string[] = [];
+        if (imageBase64List) {
+          for (const base64 of imageBase64List) {
+            const url = await uploadBase64Image(base64);
+            uploadedUrls.push(url);
+          }
+        }
 
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: process.env.AWS_S3_BUCKET!,
-            Key: key,
-            Body: buffer,
-            ContentType: mimeType,
-          })
-        );
+        const finalUrls = [...(imageUrls ?? []), ...uploadedUrls];
+        if (finalUrls.length === 0) {
+          return res.status(400).json({ success: false, message: "Product image is required" });
+        }
+        if (finalUrls.length > 5) {
+          return res.status(400).json({ success: false, message: "Maximum 5 images allowed" });
+        }
 
-        imageUrl = `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+        const updateImages: Partial<IProduct> = {
+          image: finalUrls[0],
+          images: finalUrls,
+        };
+        Object.assign(updateData, updateImages);
       }
 
       // ── Build update payload ──────────────────────────────────────
-      const updateData: Partial<IProduct> = {};
       if (name) updateData.name = name.trim();
       if (category) updateData.category = new mongoose.Types.ObjectId(category);
       if (price !== undefined) updateData.price = Number(price);
       if (stock !== undefined) updateData.stock = Number(stock);
       if (status) updateData.status = status as "active" | "inactive";
-      if (imageUrl) updateData.image = imageUrl;
       if (description !== undefined) updateData.description = description.trim();
+      assignMasterFields(updateData, req.body);
       const parsedSpecs = parseJsonArray(specifications);
       if (parsedSpecs) updateData.specifications = parsedSpecs;
       if (shippingInfo !== undefined) updateData.shippingInfo = String(shippingInfo).trim();
