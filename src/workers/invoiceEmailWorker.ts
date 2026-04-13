@@ -7,6 +7,9 @@ dotenv.config();
 import { invoiceEmailQueue } from "../services/queues/invoiceEmailQueue"; 
 import sgMail from "@sendgrid/mail";
 import { calculateVatFromTotal } from "../utils/vat";
+import { initConsoleErrorLogger } from "../utils/consoleLogger";
+
+initConsoleErrorLogger();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 
@@ -127,5 +130,4 @@ invoiceEmailQueue.on("completed", (job:any) =>
 invoiceEmailQueue.on("failed", (job:any, err:any) =>
   console.error(`🔥 Invoice job ${job.id} failed: ${err.message}`)
 );
-
 

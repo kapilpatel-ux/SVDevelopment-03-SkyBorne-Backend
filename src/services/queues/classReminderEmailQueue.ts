@@ -17,7 +17,9 @@ export interface ClassReminderEmailJob {
   userEmails: Array<{
     email: string;
     firstName: string;
+    country?: string;
     countryCode?: string;
+    timeZone?: string;
   }>;
 }
 
@@ -38,10 +40,7 @@ const buildClassReminderJobId = (jobData: ClassReminderEmailJob) => {
     typeof jobData.reminderOffsetMinutes === "number"
       ? jobData.reminderOffsetMinutes
       : Number(jobData.reminderOffsetMinutes) || 0;
-  const startCandidate = jobData.classStartAt || jobData.startDate;
-  const startTimestamp = startCandidate ? new Date(startCandidate).getTime() : NaN;
-  const startKey = Number.isFinite(startTimestamp) ? startTimestamp : "unknown";
-  return `class-reminder:${meetingId}:${reminderOffset}:${startKey}`;
+  return `class-reminder:${meetingId}:${reminderOffset}`;
 };
 
 // =====================
@@ -81,10 +80,17 @@ export const addClassReminderEmailJob = async (
     const existingJob = await classReminderEmailQueue.getJob(jobId);
     if (existingJob) {
       const state = await existingJob.getState();
-      if (state !== "failed") {
+      if (state === "active") {
+        console.warn(
+          `⚠️ Class reminder job ${jobId} is already active. Keeping existing job.`,
+        );
         return existingJob;
       }
+
       await existingJob.remove();
+      console.log(
+        `♻️ Replaced existing class reminder job ${jobId} (previous state: ${state})`,
+      );
     }
 
     const job = await classReminderEmailQueue.add(jobData, {

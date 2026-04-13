@@ -13,12 +13,14 @@ import { initializeSocket, setIOInstance } from "./config/socket";
 import { startCurrencyCron } from "./modules/CurrencyModule/CurrencyCron";
 import { initializeEmailServices } from "./services/initializeEmailService"; 
 import { startRecurringFailureSubscriptionInactiveCron } from "./cron/RecurringFailureSubscriptionInactiveCron";
+import { initConsoleErrorLogger } from "./utils/consoleLogger";
 
 const PORT = process.env.PORT || 8000;
 
 const startServer = async () => {
   try {
     console.log("🚀 Starting latest server...");
+    initConsoleErrorLogger();
 
     /** 1. Connect MongoDB */
     await connectDB();

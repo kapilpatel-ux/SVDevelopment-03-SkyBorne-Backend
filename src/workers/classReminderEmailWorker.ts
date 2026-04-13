@@ -3,18 +3,61 @@ dotenv.config();
 
 import { classReminderEmailQueue } from "../services/queues/classReminderEmailQueue";
 import sgMail from "@sendgrid/mail";
+import { initConsoleErrorLogger } from "../utils/consoleLogger";
+import { COUNTRY_TIMEZONE_MAP } from "../constants/countryTimezoneMap";
+import { getCode } from "country-list";
+
+initConsoleErrorLogger();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
+
+const resolveUserTimeZone = (user: any): string => {
+  const explicitTimeZone = String(
+    user?.timeZone || user?.timezone || ""
+  ).trim();
+  if (explicitTimeZone) {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: explicitTimeZone }).format(
+        new Date()
+      );
+      return explicitTimeZone;
+    } catch {
+      // Fall back to country-based resolution when the timezone is invalid.
+    }
+  }
+
+  const rawCountry = String(user?.country || "").trim();
+  const rawCode = String(user?.countryCode || "").trim().toUpperCase();
+  let countryCode = "";
+
+  if (rawCountry) {
+    if (/^[A-Za-z]{2}$/.test(rawCountry)) {
+      countryCode = rawCountry.toUpperCase();
+    } else {
+      const fromName = getCode(rawCountry);
+      if (fromName) {
+        countryCode = fromName.toUpperCase();
+      }
+    }
+  }
+
+  if (!countryCode && rawCode) {
+    countryCode = rawCode;
+  }
+
+  return COUNTRY_TIMEZONE_MAP[countryCode] || "UTC";
+};
 
 const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
   trainerName: string,
-  regionLocalTime: string,
-  meetingId: string
+  localTime: string,
+  meetingId: string,
 ): string => {
-  const appDeepLink = `skybornedrop://class/${meetingId}`;
-  const webLink = `${process.env.DASHBOARD_URL || "https://app.skybornedrop.com"}/class/${meetingId}`;
+  const webLink = `${
+    process.env.DASHBOARD_URL || "https://app.skybornedrop.com"
+  }/class/${meetingId}`;
 
   return `
 <!DOCTYPE html>
@@ -56,18 +99,18 @@ const getClassReminderEmailHTML = (
             letter-spacing: 1px;
             margin: 0;
         }
-        
+
         .content {
             padding: 40px 30px;
         }
-        
+
         .greeting {
             font-size: 18px;
             font-weight: 600;
             color: #c94a7f;
             margin-bottom: 15px;
         }
-        
+
         .class-info {
             background-color: #f9f9f9;
             border-left: 4px solid #c94a7f;
@@ -75,20 +118,20 @@ const getClassReminderEmailHTML = (
             margin: 25px 0;
             border-radius: 4px;
         }
-        
+
         .class-title {
             font-size: 20px;
             font-weight: 700;
             color: #2c2c2c;
             margin: 0 0 12px 0;
         }
-        
+
         .class-detail {
             font-size: 14px;
             color: #555;
             margin: 8px 0;
         }
-        
+
         .label {
             font-weight: 600;
             color: #666;
@@ -101,7 +144,7 @@ const getClassReminderEmailHTML = (
             margin: 30px 0;
             justify-content: center;
         }
-        
+
         .cta-button {
             display: inline-block;
             padding: 14px 28px;
@@ -113,26 +156,26 @@ const getClassReminderEmailHTML = (
             cursor: pointer;
             border: none;
         }
-        
+
         .cta-button.primary {
             background-color: #c94a7f;
             color: #ffffff;
         }
-        
+
         .cta-button.primary:hover {
             background-color: #b03a6f;
         }
-        
+
         .cta-button.secondary {
             background-color: #ffffff;
             color: #c94a7f;
             border: 2px solid #c94a7f;
         }
-        
+
         .cta-button.secondary:hover {
             background-color: #f8f8f8;
         }
-        
+
         .divider {
             height: 1px;
             background-color: #e0e0e0;
@@ -187,17 +230,17 @@ const getClassReminderEmailHTML = (
         <!-- Main Content Section -->
         <div class="content">
             <p class="greeting">Hi ${firstName},</p>
-            
+
             <p>Your class is coming up soon! Here are the details:</p>
-            
+
             <!-- Class Info -->
             <div class="class-info">
                 <h2 class="class-title">${meetingTitle}</h2>
                 <p class="class-detail"><span class="label">Trainer:</span> ${trainerName}</p>
-                <p class="class-detail"><span class="label">Time:</span> ${regionLocalTime}</p>
+                <p class="class-detail"><span class="label">Time:</span> ${localTime}</p>
                 <p class="class-detail">Make sure you're ready to join on time!</p>
             </div>
-            
+
             <!-- Call to Action Buttons -->
             <div class="cta-section">
                 <a href="${webLink}" class="cta-button primary" style="background-color: #c94a7f; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; display: inline-block;">
@@ -234,9 +277,24 @@ classReminderEmailQueue.process(async (job) => {
     meetingId,
     meetingTitle,
     trainerName,
-    regionLocalTime,
+    region,
+    duration,
+    reminderOffsetMinutes = 10,
+    classStartAt,
+    startDate,
     userEmails,
   } = job.data;
+
+  const resolveValidMeetingStartDate = () => {
+    const candidates = [classStartAt, startDate];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      const parsed = new Date(candidate);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+    return new Date(NaN);
+  };
+  const meetingStartDate = resolveValidMeetingStartDate();
 
   if (!userEmails || userEmails.length === 0) {
     console.warn("[ClassReminderEmailWorker] No user emails provided");
@@ -256,18 +314,47 @@ classReminderEmailQueue.process(async (job) => {
         continue;
       }
 
+      const timezone = resolveUserTimeZone(userEmail);
+      let localTime = "TBD";
+
+      if (!isNaN(meetingStartDate.getTime())) {
+        try {
+          localTime = meetingStartDate.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: timezone,
+          });
+        } catch (formatErr: any) {
+          console.warn(
+            `⚠️ Failed to format reminder date/time for timezone ${timezone}. Falling back to UTC.`,
+            formatErr?.message || formatErr,
+          );
+          localTime = meetingStartDate.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+            timeZone: "UTC",
+          });
+        }
+      }
+
       const htmlContent = getClassReminderEmailHTML(
         firstName || "there",
         meetingTitle,
-        trainerName,
-        regionLocalTime || "Soon",
-        meetingId
+        trainerName || "Your Trainer",
+        localTime,
+        meetingId,
       );
 
       const msg = {
         to: email,
         from: process.env.SENDGRID_FROM_EMAIL as string,
-        subject: `Reminder: ${meetingTitle} is coming up!`,
+        subject: `⏰ Reminder: ${meetingTitle} starts in ${
+          reminderOffsetMinutes >= 60
+            ? `${Math.round(reminderOffsetMinutes / 60)} hours`
+            : `${reminderOffsetMinutes} minutes`
+        }!`,
         html: htmlContent,
       };
 

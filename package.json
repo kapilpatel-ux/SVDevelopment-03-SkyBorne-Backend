@@ -9,6 +9,7 @@
     "start:concurrently": "concurrently --handle-input \"node dist/server.js\" \"node dist/workers/emailWorker.js\" \"node dist/workers/invoiceEmailWorker.js\"",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "worker:welcome": "node dist/workers/emailWorker.js",
+    "worker:reminder": "node dist/workers/classReminderEmailWorker.js",
     "worker:invoice": "node dist/workers/invoiceEmailWorker.js",
     "seed:plans": "ts-node --transpile-only src/seeders/plan.seeder.ts",
     "seed:faq": "ts-node --transpile-only src/seeders/faq.seeder.ts",
@@ -20,6 +21,7 @@
     "seed:trainerspecific": "ts-node --transpile-only src/seeders/trainer4-attendance.seeder.ts",
     "test:webhook:stripe-failed": "ts-node --transpile-only src/scripts/testStripeInvoicePaymentFailedWebhook.ts",
     "test:webhook:stripe-failed:idempotent": "ts-node --transpile-only src/scripts/testStripeInvoicePaymentFailedWebhook.ts --twice --check-db",
+    "queue:clear:class-reminder": "ts-node --transpile-only src/scripts/clearClassReminderQueue.ts",
     "build": "tsc",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

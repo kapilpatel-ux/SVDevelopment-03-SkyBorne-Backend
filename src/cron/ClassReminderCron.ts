@@ -17,7 +17,6 @@ export const startClassReminderCron = () => {
       console.log("⏰ Cron started:", new Date().toISOString());
       const reminderConfigs = [
         { minutesBefore: 24 * 60, flag: "reminder24HourSent" as const },
-        { minutesBefore: 30, flag: "reminder30MinSent" as const },
       ];
 
       for (const reminder of reminderConfigs) {

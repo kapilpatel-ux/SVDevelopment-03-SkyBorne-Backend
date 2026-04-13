@@ -7,4 +7,10 @@ export const MailRoutes = [
     action: MailController.GetAllMailLogs,
     method: "get",
   },
+  {
+    path: "/mail-management/error-log",
+    request: null,
+    action: MailController.GetErrorLog,
+    method: "get",
+  },
 ];

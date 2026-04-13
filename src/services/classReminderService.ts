@@ -110,7 +110,7 @@ static async getCountriesByRegion(regionName: string) {
         isActive: true,
         isEmailVerified: true,
         "subscription.status": "active",
-      }).select("email firstName lastName countryCode");
+      }).select("email firstName lastName countryCode country timeZone");
 
       console.log("[ClassReminderService] getUsersByRegion:done", {
         region,
@@ -204,7 +204,9 @@ static async getCountriesByRegion(regionName: string) {
         userId: String(user._id),
         email: user.email,
         firstName: user.firstName || user.lastName || "User",
+        country: user.country || "",
         countryCode: user.countryCode || "",
+        timeZone: user.timeZone || "",
       }));
 
       const uniqueEmailsMap = new Map<string, (typeof userEmails)[number]>();
@@ -337,7 +339,9 @@ static async getCountriesByRegion(regionName: string) {
       const userEmails = users.map((user: any) => ({
         email: user.email,
         firstName: user.firstName || user.lastName || "User",
+        country: user.country || "",
         countryCode: user.countryCode || "",
+        timeZone: user.timeZone || "",
       }));
 
       const uniqueEmailsMap = new Map<string, (typeof userEmails)[number]>();

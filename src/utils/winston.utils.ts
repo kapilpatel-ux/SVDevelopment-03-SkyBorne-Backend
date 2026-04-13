@@ -14,12 +14,16 @@ const consoleTransport = new winston.transports.Console({
   format: colorize({ all: true }),
 });
 
-const createFileTransport = (path: string, retention: string) =>
+const createFileTransport = (
+  path: string,
+  retention: string,
+  level: string = "debug"
+) =>
   new winston.transports.DailyRotateFile({
     filename: path,
     datePattern: "YYYY-MM-DD",
     maxFiles: retention,
-    level: "debug",
+    level,
   });
 
 const createLogger = (
@@ -36,7 +40,7 @@ const createLogger = (
       includeLevel ? align() : winston.format((info) => info)(),
       getLogFormat(includeLevel)
     ),
-    transports: [consoleTransport, createFileTransport(filePath, retention)],
+    transports: [consoleTransport, createFileTransport(filePath, retention, "debug")],
   });
 
 // const logger = winston.createLogger({
