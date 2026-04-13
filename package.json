@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node dist/server.js & node dist/workers/emailWorker.js & node dist/workers/invoiceEmailWorker.js",
+    "start": "node dist/server.js & node dist/workers/emailWorker.js & node dist/workers/classReminderEmailWorker.js & node dist/workers/invoiceEmailWorker.js",
     "clean": "rm -rf dist",
     "rebuild": "npm run clean && npm run build",
-    "start:concurrently": "concurrently --handle-input \"node dist/server.js\" \"node dist/workers/emailWorker.js\" \"node dist/workers/invoiceEmailWorker.js\"",
+    "start:concurrently": "concurrently --handle-input \"node dist/server.js\" \"node dist/workers/emailWorker.js\" \"node dist/workers/classReminderEmailWorker.js\" \"node dist/workers/invoiceEmailWorker.js\"",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
     "worker:welcome": "node dist/workers/emailWorker.js",
     "worker:reminder": "node dist/workers/classReminderEmailWorker.js",

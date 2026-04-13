@@ -85,13 +85,19 @@ const resolveUserTimeZone = (user: any): string => {
 const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
-  trainerName: string,
+  region: string,
   localTime: string,
-  meetingId: string,
+  localDate: string,
+  timezone: string,
+  trainerName: string,
+  duration: number,
+  reminderOffsetMinutes: number,
 ): string => {
-  const webLink = `${
-    process.env.DASHBOARD_URL || "https://app.skybornedrop.com"
-  }/class/${meetingId}`;
+  const webLink = process.env.DASHBOARD_URL || "https://app.skybornedrop.com";
+  const timeUntilClass =
+    reminderOffsetMinutes >= 60
+      ? `${Math.round(reminderOffsetMinutes / 60)} hours`
+      : `${reminderOffsetMinutes} minutes`;
 
   return `
 <!DOCTYPE html>
@@ -122,16 +128,21 @@ const getClassReminderEmailHTML = (
         
         .header {
             background: linear-gradient(135deg, #c94a7f 0%, #d97fa0 100%);
-            padding: 40px 30px;
+            padding: 30px;
             text-align: center;
-            color: white;
+            color: #ffffff;
         }
         
         .header h1 {
-            font-size: 32px;
+            font-size: 28px;
             font-weight: 700;
-            letter-spacing: 1px;
-            margin: 0;
+            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+        
+        .header p {
+            font-size: 16px;
+            opacity: 0.95;
         }
         
         .content {
@@ -139,13 +150,13 @@ const getClassReminderEmailHTML = (
         }
         
         .greeting {
-            font-size: 18px;
-            font-weight: 600;
-            color: #c94a7f;
-            margin-bottom: 15px;
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 20px;
+            line-height: 1.8;
         }
         
-        .class-info {
+        .class-details {
             background-color: #f9f9f9;
             border-left: 4px solid #c94a7f;
             padding: 20px;
@@ -153,67 +164,62 @@ const getClassReminderEmailHTML = (
             border-radius: 4px;
         }
         
-        .class-title {
-            font-size: 20px;
-            font-weight: 700;
-            color: #2c2c2c;
-            margin: 0 0 12px 0;
-        }
-        
-        .class-detail {
-            font-size: 14px;
-            color: #555;
-            margin: 8px 0;
-        }
-        
-        .label {
-            font-weight: 600;
-            color: #666;
-        }
-        
-        .cta-section {
+        .detail-row {
             display: flex;
-            flex-direction: row;
-            gap: 15px;
-            margin: 30px 0;
-            justify-content: center;
-        }
-        
-        .cta-button {
-            display: inline-block;
-            padding: 14px 28px;
-            text-decoration: none;
-            border-radius: 6px;
-            font-weight: 600;
+            justify-content: space-between;
+            margin: 12px 0;
             font-size: 15px;
-            transition: all 0.3s ease;
-            cursor: pointer;
-            border: none;
         }
         
-        .cta-button.primary {
-            background-color: #c94a7f;
-            color: #ffffff;
+        .detail-label {
+            color: #777;
+            font-weight: 500;
         }
         
-        .cta-button.primary:hover {
-            background-color: #b03a6f;
-        }
-        
-        .cta-button.secondary {
-            background-color: #ffffff;
-            color: #c94a7f;
-            border: 2px solid #c94a7f;
-        }
-        
-        .cta-button.secondary:hover {
-            background-color: #f8f8f8;
+        .detail-value {
+            color: #000;
+            margin-left: 4px;
+            font-weight: 600;
         }
         
         .divider {
             height: 1px;
             background-color: #e0e0e0;
+            margin: 20px 0;
+        }
+        
+        .cta-section {
+            text-align: center;
             margin: 30px 0;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            padding: 14px 40px;
+            background-color: #c94a7f;
+            color: #ffffff;
+            text-decoration: none;
+            border-radius: 6px;
+            font-weight: 600;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button:hover {
+            background-color: #b03a6f;
+            text-decoration: none;
+        }
+        
+        .reminder-box {
+            background-color: #fff8e6;
+            border: 2px solid #ffc107;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 20px 0;
+            text-align: center;
+            font-weight: 600;
+            color: #ff9800;
+            font-size: 16px;
         }
         
         .footer {
@@ -240,16 +246,21 @@ const getClassReminderEmailHTML = (
             }
             
             .header h1 {
-                font-size: 26px;
+                font-size: 24px;
+            }
+            
+            .detail-row {
+                flex-direction: column;
+            }
+            
+            .detail-label {
+                margin-bottom: 5px;
             }
             
             .cta-button {
-                padding: 12px 24px;
-                font-size: 14px;
-            }
-            
-            .cta-section {
-                flex-direction: column;
+                padding: 12px 30px;
+                font-size: 15px;
+                width: 100%;
             }
         }
     </style>
@@ -258,37 +269,70 @@ const getClassReminderEmailHTML = (
     <div class="container">
         <!-- Header Section -->
         <div class="header">
-            <h1>Upcoming Class Reminder</h1>
+            <h1>CLASS REMINDER</h1>
+            <p>Your class is starting soon!</p>
         </div>
         
         <!-- Main Content Section -->
         <div class="content">
-            <p class="greeting">Hi ${firstName},</p>
+            <p class="greeting">
+                Hi <strong>${firstName}</strong>,
+            </p>
             
-            <p>Your class is coming up soon! Here are the details:</p>
+            <p class="greeting">
+                Your fitness class is starting in approximately <strong>${timeUntilClass}</strong>. Do not miss it!
+            </p>
             
             <!-- Class Info -->
-            <div class="class-info">
-                <h2 class="class-title">${meetingTitle}</h2>
-                <p class="class-detail"><span class="label">Trainer:</span> ${trainerName}</p>
-                <p class="class-detail"><span class="label">Time:</span> ${localTime}</p>
-                <p class="class-detail">Make sure you're ready to join on time!</p>
+            <div class="class-details">
+                <div class="detail-row">
+                    <span class="detail-label">Class Title</span>
+                    <span class="detail-value">${meetingTitle}</span>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <div class="detail-row">
+                    <span class="detail-label">Trainer</span>
+                    <span class="detail-value">${trainerName}</span>
+                </div>
+                
+                <div class="detail-row">
+                    <span class="detail-label">Region</span>
+                    <span class="detail-value">${String(region || "").toUpperCase()}</span>
+                </div>
+                
+                <div class="divider"></div>
+                
+                <div class="detail-row">
+                    <span class="detail-label">Time</span>
+                    <span class="detail-value">${localTime} (${timezone})</span>
+                </div>
+                
+                <div class="detail-row">
+                    <span class="detail-label">Duration</span>
+                    <span class="detail-value">${duration} minutes</span>
+                </div>
+                
+                <div class="detail-row">
+                    <span class="detail-label">Date</span>
+                    <span class="detail-value">${localDate}</span>
+                </div>
             </div>
             
-            <!-- Call to Action Buttons -->
+            <div class="reminder-box">
+                Make sure to join 5 minutes before the class starts!
+            </div>
+            
+            <!-- Call to Action Button -->
             <div class="cta-section">
-                <a href="${webLink}" class="cta-button primary" style="background-color: #c94a7f; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; display: inline-block;">
-                    Join Class
-                </a>
-                <a href="${webLink}" class="cta-button secondary" style="background-color: #ffffff; color: #c94a7f; text-decoration: none; padding: 14px 28px; border-radius: 6px; font-weight: 600; border: 2px solid #c94a7f; display: inline-block;">
-                    View Details
+                <a href="${webLink}" class="cta-button">
+                    View Class Details
                 </a>
             </div>
             
-            <div class="divider"></div>
-            
-            <p style="font-size: 14px; color: #777;">
-                Open the Skyborne app or click the button above to join your class. See you there!
+            <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
+                If you have any questions, feel free to contact our support team.
             </p>
         </div>
         
@@ -296,7 +340,7 @@ const getClassReminderEmailHTML = (
         <div class="footer">
             <p>© 2025 SKYBORNE. All rights reserved.</p>
             <p style="margin-top: 10px; color: #ccc; font-size: 12px;">
-                This is an automatic reminder for your scheduled class.
+                You received this email because you are registered for this class on SKYBORNE.
             </p>
         </div>
     </div>
@@ -352,7 +396,9 @@ classReminderEmailQueue.process(async (job: any) => {
     const emailResults = await Promise.all(
       uniqueUserEmails.map(async (user: any) => {
         const timezone = resolveUserTimeZone(user);
+        const timezoneDisplay = getTimezoneDisplayLabel(timezone);
         let localTime = "TBD";
+        let localDate = "TBD";
 
         if (!isNaN(meetingStartDate.getTime())) {
           try {
@@ -360,6 +406,12 @@ classReminderEmailQueue.process(async (job: any) => {
               hour: "2-digit",
               minute: "2-digit",
               hour12: true,
+              timeZone: timezone,
+            });
+            localDate = meetingStartDate.toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
               timeZone: timezone,
             });
           } catch (formatErr: any) {
@@ -373,19 +425,32 @@ classReminderEmailQueue.process(async (job: any) => {
               hour12: true,
               timeZone: "UTC",
             });
+            localDate = meetingStartDate.toLocaleDateString("en-US", {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+              timeZone: "UTC",
+            });
           }
         }
 
         if (/invalid date/i.test(localTime)) {
           localTime = "TBD";
         }
+        if (/invalid date/i.test(localDate)) {
+          localDate = "TBD";
+        }
 
         const htmlContent = getClassReminderEmailHTML(
           user.firstName,
           meetingTitle,
-          trainerName,
+          region,
           localTime,
-          String(job?.data?.meetingId || "").trim(),
+          localDate,
+          timezoneDisplay,
+          trainerName,
+          duration,
+          reminderOffsetMinutes,
         );
 
         const msg = {

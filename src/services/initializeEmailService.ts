@@ -1,7 +1,7 @@
 // src/services/email/initializeEmailServices.ts
 import { startClassReminderCron } from "../cron/ClassReminderCron";
 import { startSubscriptionExpiryReminderCron } from "../cron/SubscriptionExpiryReminderCron";
-// import "./classReminderEmail"; // Import to start processing the queue
+import "./classReminderEmail"; // Ensure queue processor is registered in server process
 
 /**
  * Initialize all email-related services and cron jobs
