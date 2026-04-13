@@ -57,7 +57,8 @@ const getClassReminderEmailHTML = (
 ): string => {
   const webLink = `${
     process.env.DASHBOARD_URL || "https://app.skybornedrop.com"
-  }/class/${meetingId}`;
+  }/dashboard`;
+  const appDeepLink = `skybornedrop://Home`;
 
   return `
 <!DOCTYPE html>
