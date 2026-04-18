@@ -202,6 +202,48 @@ export const getClassReminderEmailSubject = (
       : `${reminderOffsetMinutes} minutes`
   }!`;
 
+const DEFAULT_DASHBOARD_URL = "https://app.skybornedrop.com/dashboard";
+
+const normalizeDashboardPath = (pathname: string): string => {
+  const trimmedPath = String(pathname || "").trim();
+  const normalizedBasePath = trimmedPath
+    .replace(/(?:\/dashboard)+\/?$/i, "")
+    .replace(/\/+$/, "");
+
+  const safeBasePath = normalizedBasePath
+    ? normalizedBasePath.startsWith("/")
+      ? normalizedBasePath
+      : `/${normalizedBasePath}`
+    : "";
+
+  return `${safeBasePath}/dashboard`;
+};
+
+const getClassReminderDashboardUrl = (): string => {
+  const rawDashboardUrl = String(process.env.DASHBOARD_URL || "").trim();
+
+  if (!rawDashboardUrl) {
+    return DEFAULT_DASHBOARD_URL;
+  }
+
+  try {
+    const parsedDashboardUrl = new URL(rawDashboardUrl);
+    parsedDashboardUrl.pathname = normalizeDashboardPath(
+      parsedDashboardUrl.pathname,
+    );
+    parsedDashboardUrl.search = "";
+    parsedDashboardUrl.hash = "";
+    return parsedDashboardUrl.toString();
+  } catch {
+    const sanitizedDashboardUrl = rawDashboardUrl.replace(/\/+$/, "");
+    const normalizedBaseUrl = sanitizedDashboardUrl
+      .replace(/(?:\/dashboard)+\/?$/i, "")
+      .replace(/\/+$/, "");
+
+    return `${normalizedBaseUrl || "https://app.skybornedrop.com"}/dashboard`;
+  }
+};
+
 export const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
@@ -213,11 +255,22 @@ export const getClassReminderEmailHTML = (
   duration: number,
   reminderOffsetMinutes: number,
 ): string => {
-  const webLink = process.env.DASHBOARD_URL || "https://app.skybornedrop.com";
+  const webLink = getClassReminderDashboardUrl();
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
       : `${reminderOffsetMinutes} minutes`;
+  const safeFirstName = String(firstName || "").trim() || "there";
+  const safeMeetingTitle = String(meetingTitle || "").trim() || "Your class";
+  const safeTrainerName = String(trainerName || "").trim() || "Your Trainer";
+  const safeRegion = String(region || "").trim().toUpperCase() || "N/A";
+  const safeLocalDate = String(localDate || "").trim() || "TBD";
+  const safeLocalTime = String(localTime || "").trim() || "TBD";
+  const safeTimezone = String(timezone || "").trim() || "UTC";
+  const safeDuration =
+    Number.isFinite(Number(duration)) && Number(duration) > 0
+      ? `${Number(duration)} minutes`
+      : "TBD";
 
   return `
 <!DOCTYPE html>
@@ -284,22 +337,27 @@ export const getClassReminderEmailHTML = (
             border-radius: 4px;
         }
 
-        .detail-row {
-            display: flex;
-            justify-content: space-between;
-            margin: 12px 0;
+        .details-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .details-table td {
+            padding: 10px 0;
             font-size: 15px;
+            vertical-align: top;
         }
 
         .detail-label {
             color: #777;
             font-weight: 500;
+            width: 36%;
         }
 
         .detail-value {
             color: #000;
-            margin-left: 4px;
             font-weight: 600;
+            text-align: right;
         }
 
         .divider {
@@ -369,12 +427,15 @@ export const getClassReminderEmailHTML = (
                 font-size: 24px;
             }
 
-            .detail-row {
-                flex-direction: column;
+            .details-table td,
+            .details-table tr {
+                display: block;
+                width: 100%;
             }
 
-            .detail-label {
-                margin-bottom: 5px;
+            .detail-label,
+            .detail-value {
+                text-align: left;
             }
 
             .cta-button {
@@ -394,47 +455,42 @@ export const getClassReminderEmailHTML = (
 
         <div class="content">
             <p class="greeting">
-                Hi <strong>${firstName}</strong>,
+                Hi <strong>${safeFirstName}</strong>,
             </p>
 
             <p class="greeting">
-                Your fitness class is starting in approximately <strong>${timeUntilClass}</strong>. Do not miss it!
+                Your fitness class <strong>${safeMeetingTitle}</strong> is starting in approximately <strong>${timeUntilClass}</strong>.
+                We have it scheduled for <strong>${safeLocalDate}</strong> at <strong>${safeLocalTime}</strong> (${safeTimezone}).
             </p>
 
             <div class="class-details">
-                <div class="detail-row">
-                    <span class="detail-label">Class Title</span>
-                    <span class="detail-value">${meetingTitle}</span>
-                </div>
-
-                <div class="divider"></div>
-
-                <div class="detail-row">
-                    <span class="detail-label">Trainer</span>
-                    <span class="detail-value">${trainerName}</span>
-                </div>
-
-                <div class="detail-row">
-                    <span class="detail-label">Region</span>
-                    <span class="detail-value">${String(region || "").toUpperCase()}</span>
-                </div>
-
-                <div class="divider"></div>
-
-                <div class="detail-row">
-                    <span class="detail-label">Time</span>
-                    <span class="detail-value">${localTime} (${timezone})</span>
-                </div>
-
-                <div class="detail-row">
-                    <span class="detail-label">Duration</span>
-                    <span class="detail-value">${duration} minutes</span>
-                </div>
-
-                <div class="detail-row">
-                    <span class="detail-label">Date</span>
-                    <span class="detail-value">${localDate}</span>
-                </div>
+                <table role="presentation" class="details-table" cellpadding="0" cellspacing="0">
+                    <tr>
+                        <td class="detail-label">Class Title</td>
+                        <td class="detail-value">${safeMeetingTitle}</td>
+                    </tr>
+                    <tr><td colspan="2"><div class="divider"></div></td></tr>
+                    <tr>
+                        <td class="detail-label">Date</td>
+                        <td class="detail-value">${safeLocalDate}</td>
+                    </tr>
+                    <tr>
+                        <td class="detail-label">Time</td>
+                        <td class="detail-value">${safeLocalTime} (${safeTimezone})</td>
+                    </tr>
+                    <tr>
+                        <td class="detail-label">Trainer</td>
+                        <td class="detail-value">${safeTrainerName}</td>
+                    </tr>
+                    <tr>
+                        <td class="detail-label">Region</td>
+                        <td class="detail-value">${safeRegion}</td>
+                    </tr>
+                    <tr>
+                        <td class="detail-label">Duration</td>
+                        <td class="detail-value">${safeDuration}</td>
+                    </tr>
+                </table>
             </div>
 
             <div class="reminder-box">
@@ -443,12 +499,12 @@ export const getClassReminderEmailHTML = (
 
             <div class="cta-section">
                 <a href="${webLink}" class="cta-button">
-                    View Class Details
+                    View Class
                 </a>
             </div>
 
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
-                If you have any questions, feel free to contact our support team.
+                Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
             </p>
         </div>
 
