@@ -1,5 +1,6 @@
 // src/services/queues/classReminderEmailQueue.ts
 import Queue from "bull";
+import { resolveMeetingStartDate } from "../classReminderEmailUtils";
 
 export interface ClassReminderEmailJob {
   meetingId: string;
@@ -7,14 +8,15 @@ export interface ClassReminderEmailJob {
   region: string;
   reminderOffsetMinutes: number;
   liveTime: string;
-  classStartAt: Date;
-  startDate?: Date;
+  classStartAt: Date | string;
+  startDate?: Date | string;
   regionTimeZone?: string;
   regionLocalTime?: string;
   regionLocalDate?: string;
   duration: number;
   trainerName: string;
   userEmails: Array<{
+    userId?: string;
     email: string;
     firstName: string;
     country?: string;
@@ -40,7 +42,15 @@ const buildClassReminderJobId = (jobData: ClassReminderEmailJob) => {
     typeof jobData.reminderOffsetMinutes === "number"
       ? jobData.reminderOffsetMinutes
       : Number(jobData.reminderOffsetMinutes) || 0;
-  return `class-reminder:${meetingId}:${reminderOffset}`;
+  const classStartAt = resolveMeetingStartDate(
+    jobData.classStartAt,
+    jobData.startDate,
+  );
+  const classStartKey = Number.isNaN(classStartAt.getTime())
+    ? "unknown-start"
+    : classStartAt.toISOString();
+
+  return `class-reminder:${meetingId}:${reminderOffset}:${classStartKey}`;
 };
 
 // =====================
@@ -80,9 +90,9 @@ export const addClassReminderEmailJob = async (
     const existingJob = await classReminderEmailQueue.getJob(jobId);
     if (existingJob) {
       const state = await existingJob.getState();
-      if (state === "active") {
+      if (state !== "failed") {
         console.warn(
-          `⚠️ Class reminder job ${jobId} is already active. Keeping existing job.`,
+          `⚠️ Class reminder job ${jobId} already exists in state ${state}. Keeping existing job.`,
         );
         return existingJob;
       }
@@ -97,7 +107,7 @@ export const addClassReminderEmailJob = async (
       jobId,
       attempts: 3,
       backoff: { type: "exponential", delay: 2000 },
-      removeOnComplete: true,
+      removeOnComplete: 1000,
       removeOnFail: false,
       delay: 0, // Process immediately, b ut can be scheduled
     });
