@@ -54,7 +54,7 @@ classReminderEmailQueue.process(async (job: any) => {
     }
     const emailResults = await Promise.all(
       uniqueUserEmails.map(async (user: any) => {
-        const { localTime, localDate, timezoneDisplay } =
+        const { localTime, localDate, timezoneDisplay, timezonesDisplayHtml } =
           formatMeetingDateTimeForUser(meetingStartDate, user);
 
         const htmlContent = getClassReminderEmailHTML(
@@ -67,6 +67,7 @@ classReminderEmailQueue.process(async (job: any) => {
           trainerName,
           duration,
           reminderOffsetMinutes,
+          timezonesDisplayHtml,
         );
 
         const msg = {

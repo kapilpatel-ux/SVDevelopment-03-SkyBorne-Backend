@@ -1,4 +1,4 @@
-export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
+const COUNTRY_TIMEZONE_MAP_ALL_RAW: Record<string, string[]> = {
   AD: [
     "Europe/Andorra",
   ],
@@ -30,24 +30,11 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "Antarctica/Mawson",
     "Antarctica/McMurdo",
     "Antarctica/Palmer",
-    "Antarctica/Rothera",
     "Antarctica/Syowa",
     "Antarctica/Troll",
-    "Antarctica/Vostok",
   ],
   AR: [
     "America/Argentina/Buenos_Aires",
-    "America/Argentina/Catamarca",
-    "America/Argentina/Cordoba",
-    "America/Argentina/Jujuy",
-    "America/Argentina/La_Rioja",
-    "America/Argentina/Mendoza",
-    "America/Argentina/Rio_Gallegos",
-    "America/Argentina/Salta",
-    "America/Argentina/San_Juan",
-    "America/Argentina/San_Luis",
-    "America/Argentina/Tucuman",
-    "America/Argentina/Ushuaia",
   ],
   AS: [
     "Pacific/Pago_Pago",
@@ -58,16 +45,9 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   AU: [
     "Antarctica/Macquarie",
     "Australia/Adelaide",
-    "Australia/Brisbane",
-    "Australia/Broken_Hill",
-    "Australia/Darwin",
     "Australia/Eucla",
-    "Australia/Hobart",
-    "Australia/Lindeman",
     "Australia/Lord_Howe",
-    "Australia/Melbourne",
     "Australia/Perth",
-    "Australia/Sydney",
   ],
   AW: [
     "America/Aruba",
@@ -122,21 +102,9 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   BR: [
     "America/Araguaina",
-    "America/Bahia",
-    "America/Belem",
     "America/Boa_Vista",
-    "America/Campo_Grande",
-    "America/Cuiaba",
     "America/Eirunepe",
-    "America/Fortaleza",
-    "America/Maceio",
-    "America/Manaus",
     "America/Noronha",
-    "America/Porto_Velho",
-    "America/Recife",
-    "America/Rio_Branco",
-    "America/Santarem",
-    "America/Sao_Paulo",
   ],
   BS: [
     "America/Nassau",
@@ -154,28 +122,11 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "America/Belize",
   ],
   CA: [
-    "America/Atikokan",
-    "America/Blanc-Sablon",
-    "America/Cambridge_Bay",
-    "America/Creston",
-    "America/Dawson",
-    "America/Dawson_Creek",
     "America/Edmonton",
-    "America/Fort_Nelson",
-    "America/Glace_Bay",
-    "America/Goose_Bay",
     "America/Halifax",
-    "America/Inuvik",
-    "America/Iqaluit",
-    "America/Moncton",
-    "America/Rankin_Inlet",
-    "America/Regina",
-    "America/Resolute",
     "America/St_Johns",
-    "America/Swift_Current",
     "America/Toronto",
     "America/Vancouver",
-    "America/Whitehorse",
     "America/Winnipeg",
   ],
   CC: [
@@ -201,7 +152,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "Pacific/Rarotonga",
   ],
   CL: [
-    "America/Coyhaique",
     "America/Punta_Arenas",
     "America/Santiago",
     "Pacific/Easter",
@@ -233,14 +183,12 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   CY: [
     "Asia/Famagusta",
-    "Asia/Nicosia",
   ],
   CZ: [
     "Europe/Prague",
   ],
   DE: [
     "Europe/Berlin",
-    "Europe/Busingen",
   ],
   DJ: [
     "Africa/Djibouti",
@@ -276,7 +224,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ES: [
     "Africa/Ceuta",
     "Atlantic/Canary",
-    "Europe/Madrid",
   ],
   ET: [
     "Africa/Addis_Ababa",
@@ -293,7 +240,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   FM: [
     "Pacific/Chuuk",
     "Pacific/Kosrae",
-    "Pacific/Pohnpei",
   ],
   FO: [
     "Atlantic/Faroe",
@@ -328,7 +274,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   GL: [
     "America/Danmarkshavn",
     "America/Nuuk",
-    "America/Scoresbysund",
     "America/Thule",
   ],
   GM: [
@@ -380,7 +325,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "Asia/Jakarta",
     "Asia/Jayapura",
     "Asia/Makassar",
-    "Asia/Pontianak",
   ],
   IE: [
     "Europe/Dublin",
@@ -455,12 +399,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   KZ: [
     "Asia/Almaty",
-    "Asia/Aqtau",
-    "Asia/Aqtobe",
-    "Asia/Atyrau",
-    "Asia/Oral",
-    "Asia/Qostanay",
-    "Asia/Qyzylorda",
   ],
   LA: [
     "Asia/Vientiane",
@@ -515,7 +453,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   MH: [
     "Pacific/Kwajalein",
-    "Pacific/Majuro",
   ],
   MK: [
     "Europe/Skopje",
@@ -560,20 +497,10 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   MX: [
     "America/Bahia_Banderas",
     "America/Cancun",
-    "America/Chihuahua",
-    "America/Ciudad_Juarez",
     "America/Hermosillo",
-    "America/Matamoros",
-    "America/Mazatlan",
-    "America/Merida",
-    "America/Mexico_City",
-    "America/Monterrey",
-    "America/Ojinaga",
-    "America/Tijuana",
   ],
   MY: [
     "Asia/Kuala_Lumpur",
-    "Asia/Kuching",
   ],
   MZ: [
     "Africa/Maputo",
@@ -653,12 +580,10 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   PS: [
     "Asia/Gaza",
-    "Asia/Hebron",
   ],
   PT: [
     "Atlantic/Azores",
     "Atlantic/Madeira",
-    "Europe/Lisbon",
   ],
   PW: [
     "Pacific/Palau",
@@ -683,28 +608,13 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "Asia/Barnaul",
     "Asia/Chita",
     "Asia/Irkutsk",
-    "Asia/Kamchatka",
-    "Asia/Khandyga",
-    "Asia/Krasnoyarsk",
     "Asia/Magadan",
-    "Asia/Novokuznetsk",
-    "Asia/Novosibirsk",
     "Asia/Omsk",
-    "Asia/Sakhalin",
-    "Asia/Srednekolymsk",
-    "Asia/Tomsk",
     "Asia/Ust-Nera",
-    "Asia/Vladivostok",
-    "Asia/Yakutsk",
     "Asia/Yekaterinburg",
     "Europe/Astrakhan",
     "Europe/Kaliningrad",
     "Europe/Kirov",
-    "Europe/Moscow",
-    "Europe/Samara",
-    "Europe/Saratov",
-    "Europe/Ulyanovsk",
-    "Europe/Volgograd",
   ],
   RW: [
     "Africa/Kigali",
@@ -822,7 +732,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   UA: [
     "Europe/Kyiv",
-    "Europe/Simferopol",
   ],
   UG: [
     "Africa/Kampala",
@@ -836,30 +745,8 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "America/Anchorage",
     "America/Boise",
     "America/Chicago",
-    "America/Denver",
     "America/Detroit",
-    "America/Indiana/Indianapolis",
-    "America/Indiana/Knox",
-    "America/Indiana/Marengo",
-    "America/Indiana/Petersburg",
-    "America/Indiana/Tell_City",
-    "America/Indiana/Vevay",
-    "America/Indiana/Vincennes",
-    "America/Indiana/Winamac",
-    "America/Juneau",
-    "America/Kentucky/Louisville",
-    "America/Kentucky/Monticello",
     "America/Los_Angeles",
-    "America/Menominee",
-    "America/Metlakatla",
-    "America/New_York",
-    "America/Nome",
-    "America/North_Dakota/Beulah",
-    "America/North_Dakota/Center",
-    "America/North_Dakota/New_Salem",
-    "America/Phoenix",
-    "America/Sitka",
-    "America/Yakutat",
     "Pacific/Honolulu",
   ],
   UY: [
@@ -867,7 +754,6 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
   ],
   UZ: [
     "Asia/Samarkand",
-    "Asia/Tashkent",
   ],
   VA: [
     "Europe/Vatican",
@@ -912,6 +798,9 @@ export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> = {
     "Africa/Harare",
   ],
 };
+
+export const COUNTRY_TIMEZONE_MAP_ALL: Record<string, string[]> =
+  COUNTRY_TIMEZONE_MAP_ALL_RAW;
 
 export const COUNTRY_TIMEZONE_MAP: Record<string, string> = Object.fromEntries(
   Object.entries(COUNTRY_TIMEZONE_MAP_ALL).map(([countryCode, timezones]) => [

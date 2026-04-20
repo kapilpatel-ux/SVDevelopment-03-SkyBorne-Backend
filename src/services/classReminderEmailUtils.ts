@@ -1,5 +1,8 @@
 import { getCode } from "country-list";
-import { COUNTRY_TIMEZONE_MAP } from "../constants/countryTimezoneMap";
+import {
+  COUNTRY_TIMEZONE_MAP,
+  COUNTRY_TIMEZONE_MAP_ALL,
+} from "../constants/countryTimezoneMap";
 
 const TIMEZONE_ABBREVIATION_MAP: Record<string, string> = {
   "Asia/Kolkata": "IST",
@@ -86,11 +89,6 @@ export const getTimezoneDisplayLabel = (timezone: string): string => {
 };
 
 export const resolveUserTimeZone = (user: any): string => {
-  const countryCode = resolveUserCountryCode(user);
-  if (countryCode && COUNTRY_TIMEZONE_MAP[countryCode]) {
-    return COUNTRY_TIMEZONE_MAP[countryCode];
-  }
-
   const explicitTimeZone = String(
     user?.timeZone || user?.timezone || "",
   ).trim();
@@ -98,8 +96,37 @@ export const resolveUserTimeZone = (user: any): string => {
     return explicitTimeZone;
   }
 
+  const countryCode = resolveUserCountryCode(user);
+  if (countryCode && COUNTRY_TIMEZONE_MAP[countryCode]) {
+    return COUNTRY_TIMEZONE_MAP[countryCode];
+  }
+
   return "UTC";
 };
+
+const resolveUserTimeZones = (user: any): string[] => {
+  const explicitTimeZone = String(user?.timeZone || user?.timezone || "").trim();
+  const hasExplicit = isValidTimeZone(explicitTimeZone);
+
+  const countryCode = resolveUserCountryCode(user);
+  const fromMap = countryCode ? COUNTRY_TIMEZONE_MAP_ALL[countryCode] : undefined;
+  if (Array.isArray(fromMap) && fromMap.length) {
+    const cleaned = fromMap.filter((timezone) => isValidTimeZone(timezone));
+    if (!hasExplicit) return cleaned;
+    return [
+      explicitTimeZone,
+      ...cleaned.filter((timezone) => timezone !== explicitTimeZone),
+    ];
+  }
+
+  if (hasExplicit) {
+    return [explicitTimeZone];
+  }
+
+  return ["UTC"];
+};
+
+const BASE_CAMP_TIMEZONE = "Asia/Dubai";
 
 export const resolveMeetingStartDate = (...candidates: any[]): Date => {
   for (const candidate of candidates) {
@@ -138,10 +165,26 @@ export const formatMeetingDateTimeForUser = (
   timezoneDisplay: string;
   localTime: string;
   localDate: string;
+  timezonesDisplayHtml: string;
 } => {
-  const timezone = resolveUserTimeZone(user);
-  const safeTimeZone = isValidTimeZone(timezone) ? timezone : "UTC";
-  const timezoneDisplay = getTimezoneDisplayLabel(safeTimeZone);
+  const userTimezones = resolveUserTimeZones(user);
+  const baseCampTimeZone = isValidTimeZone(BASE_CAMP_TIMEZONE)
+    ? BASE_CAMP_TIMEZONE
+    : "UTC";
+
+  const userPrimaryTimeZone =
+    userTimezones[0] || resolveUserTimeZone(user) || "UTC";
+  const safeUserPrimaryTimeZone = isValidTimeZone(userPrimaryTimeZone)
+    ? userPrimaryTimeZone
+    : "UTC";
+
+  const timezones = [
+    baseCampTimeZone,
+    ...userTimezones.filter((timezone) => timezone !== baseCampTimeZone),
+  ];
+
+  const safePrimaryTimeZone = safeUserPrimaryTimeZone;
+  const timezoneDisplay = getTimezoneDisplayLabel(safePrimaryTimeZone);
 
   let localTime = "TBD";
   let localDate = "TBD";
@@ -152,13 +195,13 @@ export const formatMeetingDateTimeForUser = (
         hour: "2-digit",
         minute: "2-digit",
         hour12: true,
-        timeZone: safeTimeZone,
+        timeZone: safePrimaryTimeZone,
       });
       localDate = meetingStartDate.toLocaleDateString("en-US", {
         year: "numeric",
         month: "short",
         day: "numeric",
-        timeZone: safeTimeZone,
+        timeZone: safePrimaryTimeZone,
       });
     } catch {
       localTime = meetingStartDate.toLocaleTimeString("en-US", {
@@ -184,11 +227,62 @@ export const formatMeetingDateTimeForUser = (
     localDate = "TBD";
   }
 
+  const timezoneLines: string[] = [];
+  const primaryDateForComparison = localDate;
+
+  for (const timeZone of timezones.length ? timezones : [safePrimaryTimeZone]) {
+    const safeTimeZone = isValidTimeZone(timeZone) ? timeZone : null;
+    if (!safeTimeZone) continue;
+
+    let timeText = "TBD";
+    let dateText = "TBD";
+    if (!Number.isNaN(meetingStartDate.getTime())) {
+      try {
+        timeText = meetingStartDate.toLocaleTimeString("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: safeTimeZone,
+        });
+        dateText = meetingStartDate.toLocaleDateString("en-US", {
+          year: "numeric",
+          month: "short",
+          day: "numeric",
+          timeZone: safeTimeZone,
+        });
+      } catch {
+        // Ignore and keep TBD.
+      }
+    }
+
+    const displayLabel = getTimezoneDisplayLabel(safeTimeZone);
+    const prefix =
+      dateText !== "TBD" &&
+      primaryDateForComparison !== "TBD" &&
+      dateText !== primaryDateForComparison
+        ? `${dateText} ${timeText}`
+        : timeText;
+
+    const labelPrefix =
+      safeTimeZone === baseCampTimeZone
+        ? `<strong>UAE Time</strong>: `
+        : "";
+
+    timezoneLines.push(
+      `<div style="margin:2px 0;">${labelPrefix}${prefix} (${displayLabel})</div>`,
+    );
+  }
+
+  const timezonesDisplayHtml =
+    timezoneLines.join("") ||
+    `<div style="margin:2px 0;">${localTime} (${timezoneDisplay})</div>`;
+
   return {
-    timezone: safeTimeZone,
+    timezone: safePrimaryTimeZone,
     timezoneDisplay,
     localTime,
     localDate,
+    timezonesDisplayHtml,
   };
 };
 
@@ -254,6 +348,7 @@ export const getClassReminderEmailHTML = (
   trainerName: string,
   duration: number,
   reminderOffsetMinutes: number,
+  timezonesDisplayHtml?: string,
 ): string => {
   const webLink = getClassReminderDashboardUrl();
   const timeUntilClass =
@@ -267,6 +362,9 @@ export const getClassReminderEmailHTML = (
   const safeLocalDate = String(localDate || "").trim() || "TBD";
   const safeLocalTime = String(localTime || "").trim() || "TBD";
   const safeTimezone = String(timezone || "").trim() || "UTC";
+  const safeTimezonesDisplayHtml =
+    String(timezonesDisplayHtml || "").trim() ||
+    `<div style="margin:2px 0;">${safeLocalTime} (${safeTimezone})</div>`;
   const safeDuration =
     Number.isFinite(Number(duration)) && Number(duration) > 0
       ? `${Number(duration)} minutes`
@@ -447,6 +545,9 @@ export const getClassReminderEmailHTML = (
     </style>
 </head>
 <body>
+    <span style="display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden;">
+        SKYBORNE_CLASS_REMINDER_TEMPLATE=v2026-04-20
+    </span>
     <div class="container">
         <div class="header">
             <h1>CLASS REMINDER</h1>
@@ -476,7 +577,7 @@ export const getClassReminderEmailHTML = (
                     </tr>
                     <tr>
                         <td class="detail-label">Time</td>
-                        <td class="detail-value">${safeLocalTime} (${safeTimezone})</td>
+                        <td class="detail-value">${safeTimezonesDisplayHtml}</td>
                     </tr>
                     <tr>
                         <td class="detail-label">Trainer</td>

@@ -62,7 +62,7 @@ classReminderEmailQueue.process(async (job) => {
         continue;
       }
 
-      const { localTime, localDate, timezoneDisplay } =
+      const { localTime, localDate, timezoneDisplay, timezonesDisplayHtml } =
         formatMeetingDateTimeForUser(meetingStartDate, userEmail);
 
       const htmlContent = getClassReminderEmailHTML(
@@ -75,6 +75,7 @@ classReminderEmailQueue.process(async (job) => {
         trainerName || "Your Trainer",
         duration,
         reminderOffsetMinutes,
+        timezonesDisplayHtml,
       );
 
       const msg = {
