@@ -23,6 +23,7 @@ import { OrderRoute } from "../modules/OrderModule/order.routes";
 import { CartRoute } from "../modules/ServiceModule/CartModule/Cart.route";
 import { EcomPaymentRoute } from "../modules/EcomPaymentModule/EcomPayment.route";
 import { NotificationRoute } from "../modules/NotificationModule/notification.route";
+import { ShopDashboardRoute } from "../modules/ShopDashboardModule/shopDashboard.route";
 const appApiRoutes: any = [
   ...PaymentApiRoutes,
   ...ServiceRoute,
@@ -48,6 +49,7 @@ const appApiRoutes: any = [
   ...OrderRoute,
   ...CartRoute,
   ...EcomPaymentRoute,
+  ...ShopDashboardRoute,
   ...NotificationRoute,
 
 ];
