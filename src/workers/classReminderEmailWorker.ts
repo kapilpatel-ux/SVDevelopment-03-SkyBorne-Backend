@@ -76,6 +76,7 @@ classReminderEmailQueue.process(async (job) => {
         duration,
         reminderOffsetMinutes,
         timezonesDisplayHtml,
+        meetingId,
       );
 
       const msg = {

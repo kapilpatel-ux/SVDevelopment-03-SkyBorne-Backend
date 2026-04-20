@@ -20,6 +20,7 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 // Process the queue
 classReminderEmailQueue.process(async (job: any) => {
   const {
+    meetingId,
     userEmails,
     meetingTitle,
     region,
@@ -68,6 +69,7 @@ classReminderEmailQueue.process(async (job: any) => {
           duration,
           reminderOffsetMinutes,
           timezonesDisplayHtml,
+          meetingId,
         );
 
         const msg = {

@@ -349,8 +349,13 @@ export const getClassReminderEmailHTML = (
   duration: number,
   reminderOffsetMinutes: number,
   timezonesDisplayHtml?: string,
+  meetingId?: string,
 ): string => {
   const webLink = getClassReminderDashboardUrl();
+  const safeMeetingId = String(meetingId || "").trim();
+  const appLink = safeMeetingId
+    ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
+    : "";
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -486,6 +491,18 @@ export const getClassReminderEmailHTML = (
             text-decoration: none;
         }
 
+        .cta-button--secondary {
+            background-color: #ffffff;
+            color: #c94a7f;
+            border: 2px solid #c94a7f;
+        }
+
+        .cta-button--secondary:hover {
+            background-color: #fff6fa;
+            color: #b03a6f;
+            border-color: #b03a6f;
+        }
+
         .reminder-box {
             background-color: #fff8e6;
             border: 2px solid #ffc107;
@@ -602,6 +619,16 @@ export const getClassReminderEmailHTML = (
                 <a href="${webLink}" class="cta-button">
                     View Class
                 </a>
+                ${
+                  appLink
+                    ? `
+                <div style="height: 12px; line-height: 12px;">&nbsp;</div>
+                <a href="${appLink}" class="cta-button cta-button--secondary">
+                    View Class In App
+                </a>
+                  `
+                    : ""
+                }
             </div>
 
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
