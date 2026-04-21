@@ -353,9 +353,10 @@ export const getClassReminderEmailHTML = (
 ): string => {
   const webLink = getClassReminderDashboardUrl();
   const safeMeetingId = String(meetingId || "").trim();
-  const appLink = safeMeetingId
-    ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
-    : "";
+  const appLink=null;
+  // const appLink = safeMeetingId
+  //   ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
+  //   : "";
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
