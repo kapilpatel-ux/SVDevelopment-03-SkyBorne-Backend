@@ -14,6 +14,16 @@ export const EcomPaymentRoute = [
     action: _ecomPaymentController.createCheckoutSession,
     method: "post",
   },
+  /**
+   * Create Stripe checkout session from previous order
+   * POST /ecom-payments/reorder/:orderId
+   */
+  {
+    path: "/ecom-payments/reorder/:orderId",
+    request: null,
+    action: _ecomPaymentController.reorderCheckoutSession,
+    method: "post",
+  },
 
   /**
    * Get session details (used on success page)

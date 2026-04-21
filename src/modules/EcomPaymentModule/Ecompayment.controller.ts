@@ -4,7 +4,21 @@ import { EcomStripeService } from "../../services/EcomStripe.service";
 import User from "../UserModule/models/User";
 import EcomPayment from "./Ecompayment.model";
 import Cart from "../ServiceModule/CartModule/Cart.model";
+import Order from "../OrderModule/order.model";
 export class EcomPaymentController {
+  private splitName(fullName?: string): { firstName: string; lastName: string } {
+    const safe = String(fullName || "").trim();
+    if (!safe) return { firstName: "Customer", lastName: "" };
+
+    const parts = safe.split(/\s+/);
+    if (parts.length === 1) return { firstName: parts[0], lastName: "" };
+
+    return {
+      firstName: parts[0],
+      lastName: parts.slice(1).join(" "),
+    };
+  }
+
   /**
    * POST /ecom-payments/create-checkout-session
    * Creates a Stripe Checkout session for the user's current cart.
@@ -87,6 +101,106 @@ export class EcomPaymentController {
       });
     } catch (error: any) {
       console.error("❌ [EcomPayment] createCheckoutSession error:", error.message);
+      return res.status(500).json({ success: false, message: error.message });
+    }
+  };
+
+  /**
+   * POST /ecom-payments/reorder/:orderId
+   * Creates Stripe checkout session from a previous order (skip checkout form/cart).
+   */
+  reorderCheckoutSession = async (req: Request, res: Response) => {
+    try {
+      if (!req.user) {
+        return res.status(401).json({ success: false, message: "Unauthorized" });
+      }
+
+      const userId = req.user.id;
+      const { orderId } = req.params;
+
+      const order = await Order.findOne({ _id: orderId, userId }).lean();
+      if (!order) {
+        return res.status(404).json({
+          success: false,
+          message: "Order not found",
+        });
+      }
+
+      const orderStatus = String((order as any).orderStatus || "").toLowerCase();
+      const allowedStatuses = ["delivered", "cancelled", "refunded"];
+      if (!allowedStatuses.includes(orderStatus)) {
+        return res.status(400).json({
+          success: false,
+          message: "Reorder is only available for completed or past orders",
+        });
+      }
+
+      const items = Array.isArray((order as any).items) ? (order as any).items : [];
+      if (!items.length) {
+        return res.status(400).json({
+          success: false,
+          message: "No items available for reorder",
+        });
+      }
+
+      const user = await User.findById(userId).lean();
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const shipping = (order as any).shippingAddress || {};
+      const split = this.splitName(shipping.fullName);
+      const shippingAddress = {
+        firstName: split.firstName || (user as any).firstName || "Customer",
+        lastName: split.lastName || (user as any).lastName || "",
+        address: shipping.addressLine1 || "",
+        city: shipping.city || (user as any).city || "",
+        zip: shipping.postalCode || "",
+        phone: shipping.phone || "",
+        email: (user as any).email || "",
+        state: shipping.state || "",
+        country: shipping.country || "",
+      };
+
+      const cartItems = items
+        .map((item: any) => ({
+          productId:
+            item?.product?.toString?.() || String(item?.product || "").trim(),
+          name: item?.name || "Item",
+          price: Number(item?.price || 0),
+          quantity: Number(item?.quantity || 0),
+          image: item?.image || undefined,
+        }))
+        .filter((item: any) => item.productId && item.price > 0 && item.quantity > 0);
+
+      if (!cartItems.length) {
+        return res.status(400).json({
+          success: false,
+          message: "Order items are invalid for reorder",
+        });
+      }
+
+      const checkoutEmail = String((user as any).email || "").trim().toLowerCase();
+
+      const result = await EcomStripeService.createEcomCheckoutSession(
+        userId,
+        cartItems,
+        shippingAddress,
+        checkoutEmail,
+        "web"
+      );
+
+      return res.status(200).json({
+        success: true,
+        message: "Reorder checkout session created",
+        data: {
+          checkoutUrl: result.checkoutUrl,
+          sessionId: result.sessionId,
+          orderRef: result.orderRef,
+        },
+      });
+    } catch (error: any) {
+      console.error("❌ [EcomPayment] reorderCheckoutSession error:", error.message);
       return res.status(500).json({ success: false, message: error.message });
     }
   };
