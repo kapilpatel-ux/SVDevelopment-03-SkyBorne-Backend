@@ -117,6 +117,23 @@ export class EcomPaymentController {
 
       const userId = req.user.id;
       const { orderId } = req.params;
+      const {
+        source,
+        successUrl,
+        cancelUrl,
+      } = (req.body || {}) as {
+        source?: "app" | "web" | string;
+        successUrl?: string;
+        cancelUrl?: string;
+      };
+
+      const headerSource = String(req.headers["x-client-source"] || "").toLowerCase();
+      const resolvedSource: "app" | "web" =
+        source === "app" || source === "web"
+          ? source
+          : headerSource === "app"
+            ? "app"
+            : "web";
 
       const order = await Order.findOne({ _id: orderId, userId }).lean();
       if (!order) {
@@ -187,7 +204,9 @@ export class EcomPaymentController {
         cartItems,
         shippingAddress,
         checkoutEmail,
-        "web"
+        resolvedSource,
+        successUrl,
+        cancelUrl
       );
 
       return res.status(200).json({
