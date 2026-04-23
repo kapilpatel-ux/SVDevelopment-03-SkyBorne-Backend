@@ -141,6 +141,7 @@ export const sendInvoiceEmail = async (
   const taxRate = Number.isFinite(invoiceData.taxRate) ? invoiceData.taxRate! : 0;
   const totals = calculateVatFromTotal(invoiceData.amount, taxRate);
   const taxLabel = taxRate > 0 ? `VAT (${Math.round(taxRate * 100)}%)` : "Tax (0%)";
+  const displayCurrency = "USD";
 
   const msg = {
     to: invoiceData.userEmail,
@@ -174,7 +175,7 @@ export const sendInvoiceEmail = async (
         </tr>
         <tr>
           <td><strong>Amount:</strong></td>
-          <td>${invoiceData.currency} ${invoiceData.amount.toFixed(2)}</td>
+          <td>${displayCurrency} ${invoiceData.amount.toFixed(2)}</td>
         </tr>
         <tr>
           <td><strong>Subscription Ends:</strong></td>
@@ -184,15 +185,15 @@ export const sendInvoiceEmail = async (
       <table style="width: 100%; margin: 20px 0;">
         <tr>
           <td><strong>Subtotal:</strong></td>
-          <td>${invoiceData.currency} ${totals.subtotal.toFixed(2)}</td>
+          <td>${displayCurrency} ${totals.subtotal.toFixed(2)}</td>
         </tr>
         <tr>
           <td><strong>${taxLabel}:</strong></td>
-          <td>${invoiceData.currency} ${totals.vatAmount.toFixed(2)}</td>
+          <td>${displayCurrency} ${totals.vatAmount.toFixed(2)}</td>
         </tr>
         <tr>
           <td><strong>Total:</strong></td>
-          <td>${invoiceData.currency} ${totals.total.toFixed(2)}</td>
+          <td>${displayCurrency} ${totals.total.toFixed(2)}</td>
         </tr>
       </table>
       <hr />

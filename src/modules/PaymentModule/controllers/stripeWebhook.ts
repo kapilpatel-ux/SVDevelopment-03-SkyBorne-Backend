@@ -511,6 +511,16 @@ router.post(
                 )
               : paidLocalAmount;
 
+          // NOTE: `amount` is stored in our base currency (USD). Stripe may bill in a local
+          // currency depending on the original checkout session, so keep that local currency
+          // only inside the Stripe invoice payload (gatewayResponse) and use USD for emails/invoices.
+          const baseCurrency = (basePayment?.currency || "USD").toUpperCase();
+          const localCurrency = (
+            hydratedInvoice.currency ||
+            basePayment?.currency ||
+            "USD"
+          ).toUpperCase();
+
           const recurringPayment = await Payment.create({
             userId: user._id,
             orderRef: `STRIPE-REC-${hydratedInvoice.id}`,
@@ -518,11 +528,7 @@ router.post(
             amount,
             localAmount: paidLocalAmount,
             plan: basePayment?.plan || user.plan || "unknown",
-            currency: (
-              hydratedInvoice.currency ||
-              basePayment?.currency ||
-              "USD"
-            ).toUpperCase(),
+            currency: baseCurrency,
             status: "COMPLETED",
             gateway: "stripe",
             billingType: basePayment?.billingType || user.billingType || "monthly",
@@ -534,7 +540,13 @@ router.post(
             isRecurring: true,
             recurringCycle: new Date().toISOString().slice(0, 7),
             verifiedAt: new Date(),
-            gatewayResponse: hydratedInvoice,
+            gatewayResponse: {
+              ...(hydratedInvoice as any),
+              __skyborne: {
+                baseCurrency,
+                localCurrency,
+              },
+            },
           });
 
           console.log("✅ Recurring payment created:", {
@@ -544,6 +556,7 @@ router.post(
             transactionId,
             amount: recurringPayment.amount,
             currency: recurringPayment.currency,
+            localCurrency,
           });
 
           await PaymentController.handleSuccessfulPayment(recurringPayment);

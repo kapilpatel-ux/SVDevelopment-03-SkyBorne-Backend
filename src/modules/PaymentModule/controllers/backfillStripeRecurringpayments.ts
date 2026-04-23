@@ -339,6 +339,13 @@
     }
 
     try {
+      const baseCurrency = (basePayment?.currency || "USD").toUpperCase();
+      const localCurrency = (
+        invoice.currency ||
+        basePayment?.currency ||
+        "USD"
+      ).toUpperCase();
+
       const recurringPayment = await Payment.create({
         userId: user._id,
         orderRef: `STRIPE-REC-${invoiceId}`,
@@ -346,11 +353,7 @@
         amount,
         localAmount: paidLocalAmount,
         plan: basePayment?.plan || (user as any).plan || "unknown",
-        currency: (
-          invoice.currency ||
-          basePayment?.currency ||
-          "USD"
-        ).toUpperCase(),
+        currency: baseCurrency,
         status: "COMPLETED",
         gateway: "stripe",
         billingType:
@@ -367,7 +370,13 @@
             ? invoice.status_transitions.paid_at * 1000
             : invoice.created * 1000,
         ),
-        gatewayResponse: invoice,
+        gatewayResponse: {
+          ...(invoice as any),
+          __skyborne: {
+            baseCurrency,
+            localCurrency,
+          },
+        },
       });
 
       await PaymentController.handleSuccessfulPayment(recurringPayment);

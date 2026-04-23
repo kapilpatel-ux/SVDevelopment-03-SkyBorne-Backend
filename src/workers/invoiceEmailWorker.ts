@@ -15,7 +15,7 @@ sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 
 invoiceEmailQueue.process(async (job:any) => {;
 
-  const { invoiceId, email, userName, plan, amount, currency, date, subscriptionEndDate, orderRef, invoicePDF, taxRate } = job.data;
+  const { invoiceId, email, userName, plan, amount, date, subscriptionEndDate, orderRef, invoicePDF, taxRate } = job.data;
 
   try {
     const pdfBuffer = Buffer.from(invoicePDF, "base64");
@@ -25,6 +25,7 @@ invoiceEmailQueue.process(async (job:any) => {;
     const normalizedTaxRate = Number.isFinite(taxRate) ? taxRate : 0;
     const totals = calculateVatFromTotal(amount, normalizedTaxRate);
     const taxLabel = normalizedTaxRate > 0 ? `VAT (${Math.round(normalizedTaxRate * 100)}%)` : "Tax (0%)";
+    const displayCurrency = "USD";
 
     const msg = {
       to: email,
@@ -57,7 +58,7 @@ invoiceEmailQueue.process(async (job:any) => {;
             </tr>
             <tr style="background-color: #f5f5f5;">
               <td style="padding: 10px; font-weight: bold; border: 1px solid #ddd;">Amount</td>
-              <td style="padding: 10px; border: 1px solid #ddd;">${currency} ${amount.toFixed(2)}</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">${displayCurrency} ${amount.toFixed(2)}</td>
             </tr>
             <tr>
               <td style="padding: 10px; font-weight: bold; border: 1px solid #ddd;">Subscription Ends</td>
@@ -68,15 +69,15 @@ invoiceEmailQueue.process(async (job:any) => {;
           <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
             <tr style="background-color: #f5f5f5;">
               <td style="padding: 10px; font-weight: bold; border: 1px solid #ddd;">Subtotal</td>
-              <td style="padding: 10px; border: 1px solid #ddd;">${currency} ${totals.subtotal.toFixed(2)}</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">${displayCurrency} ${totals.subtotal.toFixed(2)}</td>
             </tr>
             <tr>
               <td style="padding: 10px; font-weight: bold; border: 1px solid #ddd;">${taxLabel}</td>
-              <td style="padding: 10px; border: 1px solid #ddd;">${currency} ${totals.vatAmount.toFixed(2)}</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">${displayCurrency} ${totals.vatAmount.toFixed(2)}</td>
             </tr>
             <tr style="background-color: #f5f5f5;">
               <td style="padding: 10px; font-weight: bold; border: 1px solid #ddd;">Total</td>
-              <td style="padding: 10px; border: 1px solid #ddd;">${currency} ${totals.total.toFixed(2)}</td>
+              <td style="padding: 10px; border: 1px solid #ddd;">${displayCurrency} ${totals.total.toFixed(2)}</td>
             </tr>
           </table>
           
@@ -130,4 +131,3 @@ invoiceEmailQueue.on("completed", (job:any) =>
 invoiceEmailQueue.on("failed", (job:any, err:any) =>
   console.error(`🔥 Invoice job ${job.id} failed: ${err.message}`)
 );
-
