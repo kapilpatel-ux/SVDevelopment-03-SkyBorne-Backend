@@ -6,7 +6,11 @@ module.exports = {
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
-      max_memory_restart: "300M"
+      max_memory_restart: "300M",
+      env: {
+        CLASS_REMINDER_PROCESS_IN_SERVER: "false",
+        NODE_ENV: "production"
+      }
     },
     {
       name: "email-worker",
@@ -19,6 +23,14 @@ module.exports = {
     {
       name: "invoice-worker",
       script: "dist/workers/invoiceEmailWorker.js",
+      exec_mode: "fork",
+      instances: 1,
+      autorestart: true,
+      max_memory_restart: "200M"
+    },
+    {
+      name: "class-reminder-worker",
+      script: "dist/workers/classReminderEmailWorker.js",
       exec_mode: "fork",
       instances: 1,
       autorestart: true,
