@@ -20,6 +20,7 @@ import extractPhoneDetails from "../../../utils/extractPhoneDetail";
 import { request } from "http";
 import { getName } from "country-list";
 import { PushNotificationService } from "../../../services/pushNotification.service";
+import { NotFoundError } from "../../../handlers/httpError.handler";
 
 // Helper function for logging auth events
 
@@ -535,7 +536,7 @@ export class AuthController {
 
     const user = await User.findOne({ email });
     if (!user) {
-      throw new Error("No account found with this email");
+      throw new NotFoundError("No account found with this email");
     }
 
     PushNotificationService.sendPasswordResetRequested(String(user._id)).catch(

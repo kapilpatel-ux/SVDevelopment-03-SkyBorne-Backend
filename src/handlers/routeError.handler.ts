@@ -7,6 +7,7 @@
 */
 
 import { NextFunction, Request, Response } from 'express';
+import { HttpError } from './httpError.handler';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function catchErrors(fn: any) {
@@ -19,13 +20,16 @@ export function catchErrors(fn: any) {
         });
       }
 
-      console.error(`[catchErrors] Controller "${fn.name || 'anonymous'}" failed:`, error);
+      if (error instanceof HttpError) {
+        return next(error);
+      }
 
-      // Avoid leaking internal error details to clients.
-      return res.status(500).json({
-        success: false,
-        message: 'Internal server error',
-      });
+      console.error(
+        `[catchErrors] Controller "${fn.name || 'anonymous'}" failed:`,
+        error
+      );
+
+      return next(error);
     });
   };
 }
