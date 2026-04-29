@@ -6,6 +6,10 @@ import Customer from "../CustomerModule/customer.model";
 import User from "../UserModule/models/User";
 import EcomPayment from "../EcomPaymentModule/Ecompayment.model";
 import { EcomStripeService } from "../../services/EcomStripe.service";
+import {
+  sendEcomOrderCancelledEmails,
+  sendEcomOrderStatusUpdatedEmails,
+} from "../../services/ecomOrderEmail.service";
 
 export class OrderController {
   /* ============================= */
@@ -407,6 +411,7 @@ export class OrderController {
       console.log("✅ [UpdateOrderStatus] Order found");
       console.log("🔵 [UpdateOrderStatus] Current status:", order.orderStatus);
 
+      const previousStatus = String(order.orderStatus || "");
       order.orderStatus = orderStatus;
 
       if (orderStatus === "Delivered") {
@@ -416,6 +421,34 @@ export class OrderController {
 
       await order.save();
       console.log("✅ [UpdateOrderStatus] Order updated successfully");
+
+      void (async () => {
+        try {
+          const user = await User.findById(order.userId)
+            .select("firstName lastName email")
+            .lean();
+          const userEmail = String((user as any)?.email || "").trim();
+
+          await sendEcomOrderStatusUpdatedEmails({
+            orderNumber: String((order as any).orderNumber || orderId),
+            totalAmount: Number((order as any).totalAmount || 0),
+            updatedAt: new Date(),
+            previousStatus,
+            newStatus: String(orderStatus || ""),
+            user: {
+              id: String(order.userId),
+              firstName: (user as any)?.firstName,
+              lastName: (user as any)?.lastName,
+              email: userEmail || undefined,
+            },
+          });
+        } catch (emailError: any) {
+          console.warn(
+            "⚠️ [UpdateOrderStatus] Failed to send status update emails:",
+            emailError?.message || emailError
+          );
+        }
+      })();
 
       return res.status(200).json({
         success: true,
@@ -439,6 +472,35 @@ export class OrderController {
   cancelOrder = async (req: Request, res: Response) => {
     let session: mongoose.ClientSession | null = null;
     const { orderId } = req.params;
+
+    const triggerCancelEmails = (order: any, cancelledBy: "customer" | "admin") => {
+      void (async () => {
+        try {
+          const user = await User.findById(order.userId)
+            .select("firstName lastName email")
+            .lean();
+          const userEmail = String((user as any)?.email || "").trim();
+
+          await sendEcomOrderCancelledEmails({
+            orderNumber: String((order as any).orderNumber || orderId),
+            totalAmount: Number((order as any).totalAmount || 0),
+            cancelledAt: new Date(),
+            cancelledBy,
+            user: {
+              id: String(order.userId),
+              firstName: (user as any)?.firstName,
+              lastName: (user as any)?.lastName,
+              email: userEmail || undefined,
+            },
+          });
+        } catch (emailError: any) {
+          console.warn(
+            "⚠️ [CancelOrder] Failed to send cancellation emails:",
+            emailError?.message || emailError
+          );
+        }
+      })();
+    };
 
     const runCancel = async (activeSession?: mongoose.ClientSession) => {
       const orderQuery = Order.findById(orderId);
@@ -514,6 +576,11 @@ export class OrderController {
       await session.commitTransaction();
       session.endSession();
 
+      const cancelledBy =
+        req.user?.role === "admin" ? "admin" : "customer";
+
+      triggerCancelEmails(txnResult.order, cancelledBy);
+
       return res.status(200).json({
         success: true,
         message: "Order cancelled successfully",
@@ -545,6 +612,10 @@ export class OrderController {
               message: fallbackResult.message,
             });
           }
+
+          const cancelledBy =
+            req.user?.role === "admin" ? "admin" : "customer";
+          triggerCancelEmails(fallbackResult.order, cancelledBy);
 
           return res.status(200).json({
             success: true,

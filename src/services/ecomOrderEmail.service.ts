@@ -36,6 +36,33 @@ type SendEcomOrderEmailsParams = {
   items: EmailOrderItem[];
 };
 
+type SendEcomOrderCancelledEmailsParams = {
+  orderNumber: string;
+  totalAmount: number;
+  cancelledAt: Date;
+  cancelledBy: "customer" | "admin";
+  user: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  };
+};
+
+type SendEcomOrderStatusUpdatedEmailsParams = {
+  orderNumber: string;
+  totalAmount: number;
+  updatedAt: Date;
+  previousStatus?: string;
+  newStatus: string;
+  user: {
+    id: string;
+    firstName?: string;
+    lastName?: string;
+    email?: string;
+  };
+};
+
 const formatCurrency = (amount: number, currency: string) => {
   return `${currency.toUpperCase()} ${Number(amount || 0).toFixed(2)}`;
 };
@@ -53,6 +80,10 @@ const formatReadableDateTime = (value: Date) => {
     hour12: true,
     timeZoneName: "short",
   });
+};
+
+const formatUsd = (amount: number) => {
+  return `$${Number(amount || 0).toFixed(2)}`;
 };
 
 const escapeHtml = (value?: string | number | null) => {
@@ -418,6 +449,205 @@ export const sendEcomOrderSuccessEmails = async (
   } else {
     console.warn(
       `⚠️ [EcomEmail] User email missing for order ${params.orderRef}; skipping user confirmation email.`
+    );
+  }
+
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+};
+
+const buildOrderCancelledAdminEmailHtml = (
+  params: SendEcomOrderCancelledEmailsParams
+) => {
+  const fullName = `${params.user.firstName || ""} ${params.user.lastName || ""}`.trim();
+  const cancelledAt = formatReadableDateTime(params.cancelledAt);
+
+  const content = `
+    <p style="margin-top:0;">An ecom order has been cancelled by the ${escapeHtml(params.cancelledBy)}.</p>
+
+    <div class="card">
+      <h3>Order</h3>
+      <div class="meta-row"><span class="meta-label">Order Number:</span> <span class="meta-value">${escapeHtml(params.orderNumber)}</span></div>
+      <div class="meta-row"><span class="meta-label">Total Amount:</span> <span class="meta-value">${escapeHtml(formatUsd(params.totalAmount))}</span></div>
+      <div class="meta-row"><span class="meta-label">Cancelled At:</span> <span class="meta-value">${escapeHtml(cancelledAt)}</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Customer</h3>
+      <div class="meta-row"><span class="meta-label">User ID:</span> <span class="meta-value">${escapeHtml(params.user.id)}</span></div>
+      <div class="meta-row"><span class="meta-label">Name:</span> <span class="meta-value">${escapeHtml(fullName || "N/A")}</span></div>
+      <div class="meta-row"><span class="meta-label">Email:</span> <span class="meta-value">${escapeHtml(params.user.email || "N/A")}</span></div>
+    </div>
+  `;
+
+  return getBaseEmailShell("Order Cancelled", `Order ${params.orderNumber} was cancelled`, content);
+};
+
+const buildOrderCancelledUserEmailHtml = (
+  params: SendEcomOrderCancelledEmailsParams
+) => {
+  const fullName = `${params.user.firstName || ""} ${params.user.lastName || ""}`.trim();
+  const cancelledAt = formatReadableDateTime(params.cancelledAt);
+
+  const content = `
+    <p style="margin-top:0;">Hi ${escapeHtml(fullName || "there")},</p>
+    <p>Your order has been cancelled successfully.</p>
+
+    <div class="card">
+      <h3>Order</h3>
+      <div class="meta-row"><span class="meta-label">Order Number:</span> <span class="meta-value">${escapeHtml(params.orderNumber)}</span></div>
+      <div class="meta-row"><span class="meta-label">Total Amount:</span> <span class="meta-value">${escapeHtml(formatUsd(params.totalAmount))}</span></div>
+      <div class="meta-row"><span class="meta-label">Cancelled At:</span> <span class="meta-value">${escapeHtml(cancelledAt)}</span></div>
+    </div>
+
+    <p style="margin-bottom:0;">If you did not request this cancellation, please contact support.</p>
+  `;
+
+  return getBaseEmailShell("Order Cancelled", `Order ${params.orderNumber} cancelled`, content);
+};
+
+export const sendEcomOrderCancelledEmails = async (
+  params: SendEcomOrderCancelledEmailsParams
+): Promise<void> => {
+  if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_FROM_EMAIL) {
+    console.warn(
+      "⚠️ [EcomEmail] SENDGRID_API_KEY or SENDGRID_FROM_EMAIL is missing; skipping cancellation emails."
+    );
+    return;
+  }
+
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+  const adminEmails = await resolveAdminEmails();
+  const userEmail = String(params.user.email || "").trim().toLowerCase();
+
+  const jobs: Promise<any>[] = [];
+
+  if (adminEmails.length > 0) {
+    adminEmails.forEach((adminEmail) => {
+      jobs.push(
+        sgMail.send({
+          to: adminEmail,
+          from: process.env.SENDGRID_FROM_EMAIL,
+          subject: `Order Cancelled: ${params.orderNumber}`,
+          html: buildOrderCancelledAdminEmailHtml(params),
+        } as any)
+      );
+    });
+  }
+
+  if (userEmail) {
+    jobs.push(
+      sgMail.send({
+        to: userEmail,
+        from: process.env.SENDGRID_FROM_EMAIL,
+        subject: `Order Cancelled: ${params.orderNumber}`,
+        html: buildOrderCancelledUserEmailHtml(params),
+      } as any)
+    );
+  }
+
+  if (!jobs.length) return;
+  await Promise.all(jobs);
+};
+
+const buildOrderStatusUpdatedAdminEmailHtml = (
+  params: SendEcomOrderStatusUpdatedEmailsParams
+) => {
+  const fullName = `${params.user.firstName || ""} ${params.user.lastName || ""}`.trim();
+  const updatedAt = formatReadableDateTime(params.updatedAt);
+
+  const content = `
+    <p style="margin-top:0;">An admin updated an ecom order status.</p>
+
+    <div class="card">
+      <h3>Order</h3>
+      <div class="meta-row"><span class="meta-label">Order Number:</span> <span class="meta-value">${escapeHtml(params.orderNumber)}</span></div>
+      <div class="meta-row"><span class="meta-label">Total Amount:</span> <span class="meta-value">${escapeHtml(formatUsd(params.totalAmount))}</span></div>
+      <div class="meta-row"><span class="meta-label">Previous Status:</span> <span class="meta-value">${escapeHtml(params.previousStatus || "N/A")}</span></div>
+      <div class="meta-row"><span class="meta-label">New Status:</span> <span class="meta-value">${escapeHtml(params.newStatus)}</span></div>
+      <div class="meta-row"><span class="meta-label">Updated At:</span> <span class="meta-value">${escapeHtml(updatedAt)}</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Customer</h3>
+      <div class="meta-row"><span class="meta-label">User ID:</span> <span class="meta-value">${escapeHtml(params.user.id)}</span></div>
+      <div class="meta-row"><span class="meta-label">Name:</span> <span class="meta-value">${escapeHtml(fullName || "N/A")}</span></div>
+      <div class="meta-row"><span class="meta-label">Email:</span> <span class="meta-value">${escapeHtml(params.user.email || "N/A")}</span></div>
+    </div>
+  `;
+
+  return getBaseEmailShell(
+    "Order Status Updated",
+    `Order ${params.orderNumber} is now ${params.newStatus}`,
+    content
+  );
+};
+
+const buildOrderStatusUpdatedUserEmailHtml = (
+  params: SendEcomOrderStatusUpdatedEmailsParams
+) => {
+  const fullName = `${params.user.firstName || ""} ${params.user.lastName || ""}`.trim();
+  const updatedAt = formatReadableDateTime(params.updatedAt);
+
+  const content = `
+    <p style="margin-top:0;">Hi ${escapeHtml(fullName || "there")},</p>
+    <p>Your order status has been updated.</p>
+
+    <div class="card">
+      <h3>Order</h3>
+      <div class="meta-row"><span class="meta-label">Order Number:</span> <span class="meta-value">${escapeHtml(params.orderNumber)}</span></div>
+      <div class="meta-row"><span class="meta-label">Previous Status:</span> <span class="meta-value">${escapeHtml(params.previousStatus || "N/A")}</span></div>
+      <div class="meta-row"><span class="meta-label">New Status:</span> <span class="meta-value">${escapeHtml(params.newStatus)}</span></div>
+      <div class="meta-row"><span class="meta-label">Updated At:</span> <span class="meta-value">${escapeHtml(updatedAt)}</span></div>
+    </div>
+  `;
+
+  return getBaseEmailShell(
+    "Order Status Updated",
+    `Order ${params.orderNumber} is now ${params.newStatus}`,
+    content
+  );
+};
+
+export const sendEcomOrderStatusUpdatedEmails = async (
+  params: SendEcomOrderStatusUpdatedEmailsParams
+): Promise<void> => {
+  if (!process.env.SENDGRID_API_KEY || !process.env.SENDGRID_FROM_EMAIL) {
+    console.warn(
+      "⚠️ [EcomEmail] SENDGRID_API_KEY or SENDGRID_FROM_EMAIL is missing; skipping status update emails."
+    );
+    return;
+  }
+
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+
+  const adminEmails = await resolveAdminEmails();
+  const userEmail = String(params.user.email || "").trim().toLowerCase();
+
+  const jobs: Promise<any>[] = [];
+
+  if (adminEmails.length > 0) {
+    adminEmails.forEach((adminEmail) => {
+      jobs.push(
+        sgMail.send({
+          to: adminEmail,
+          from: process.env.SENDGRID_FROM_EMAIL,
+          subject: `Order Status Updated: ${params.orderNumber}`,
+          html: buildOrderStatusUpdatedAdminEmailHtml(params),
+        } as any)
+      );
+    });
+  }
+
+  if (userEmail) {
+    jobs.push(
+      sgMail.send({
+        to: userEmail,
+        from: process.env.SENDGRID_FROM_EMAIL,
+        subject: `Order Status Updated: ${params.orderNumber}`,
+        html: buildOrderStatusUpdatedUserEmailHtml(params),
+      } as any)
     );
   }
 
