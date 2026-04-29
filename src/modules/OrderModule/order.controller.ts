@@ -333,12 +333,23 @@ export class OrderController {
       const search = ((req.query.search as string) || "").trim();
       const status = (req.query.status as string) || "";
       const paymentStatus = (req.query.paymentStatus as string) || "";
+      const fromDate = (req.query.fromDate as string) || "";
+      const toDate = (req.query.toDate as string) || "";
 
       const skip = (page - 1) * limit;
 
       console.log("🔵 [GetAllOrders] Pagination - Page:", page, "Limit:", limit, "Skip:", skip);
       console.log("🔵 [GetAllOrders] Search:", search);
-      console.log("🔵 [GetAllOrders] Filters - Status:", status, "PaymentStatus:", paymentStatus);
+      console.log(
+        "🔵 [GetAllOrders] Filters - Status:",
+        status,
+        "PaymentStatus:",
+        paymentStatus,
+        "FromDate:",
+        fromDate,
+        "ToDate:",
+        toDate
+      );
 
       // Build query
       const filters: any = {};
@@ -349,6 +360,27 @@ export class OrderController {
 
       if (paymentStatus && paymentStatus !== "all") {
         filters.paymentStatus = paymentStatus;
+      }
+
+      if (fromDate || toDate) {
+        const createdAtFilter: any = {};
+        if (fromDate) {
+          const from = new Date(fromDate);
+          if (!isNaN(from.getTime())) {
+            from.setHours(0, 0, 0, 0);
+            createdAtFilter.$gte = from;
+          }
+        }
+        if (toDate) {
+          const to = new Date(toDate);
+          if (!isNaN(to.getTime())) {
+            to.setHours(23, 59, 59, 999);
+            createdAtFilter.$lte = to;
+          }
+        }
+        if (Object.keys(createdAtFilter).length > 0) {
+          filters.createdAt = createdAtFilter;
+        }
       }
 
       // Add search filter for order number, shipping info, or user identity
