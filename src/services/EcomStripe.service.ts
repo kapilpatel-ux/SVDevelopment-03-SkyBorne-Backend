@@ -7,6 +7,7 @@ import Cart from "../modules/ServiceModule/CartModule/Cart.model";
 import User from "../modules/UserModule/models/User";
 import Product from "../modules/ProductModule/product.models";
 import { sendEcomOrderSuccessEmails } from "./ecomOrderEmail.service";
+import crypto from "crypto";
 
 // ── Stripe instance (separate from subscription stripe) ──────────────────────
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
@@ -14,6 +15,24 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
 });
 
 export class EcomStripeService {
+  private static buildOrderFingerprintFromItems(
+    items: Array<{ product: any; quantity: number }>
+  ): string {
+    const safe = Array.isArray(items) ? items : [];
+    const normalized = safe
+      .map((item: any) => {
+        const productId = String(item?.product?.toString?.() || item?.product || "").trim();
+        const qty = Number(item?.quantity || 0);
+        if (!productId || !Number.isFinite(qty) || qty <= 0) return null;
+        return `${productId}:${qty}`;
+      })
+      .filter(Boolean)
+      .sort()
+      .join("|");
+
+    return crypto.createHash("sha256").update(normalized).digest("hex");
+  }
+
   private static async decrementProductStockForOrderItems(
     orderItems: Array<{ product: any; quantity: number }>
   ) {
@@ -390,8 +409,15 @@ console.log("🔵 [EcomStripe] Mapped shippingAddress:", shippingAddress);
 
     // ── 3. Create Order ─────────────────────────────────────────────────────
     console.log("🔵 [EcomStripe] Step 3: Creating order:", orderRef);
+    const orderFingerprint = EcomStripeService.buildOrderFingerprintFromItems(
+      (orderItems || []).map((item: any) => ({
+        product: item.product,
+        quantity: item.quantity,
+      }))
+    );
     const order = await Order.create({
       orderNumber: orderRef,
+      orderFingerprint,
       userId,
       customerId: customer._id,
       stripePaymentIntentId: paymentIntent.id,

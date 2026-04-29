@@ -6,6 +6,71 @@ import EcomPayment from "./Ecompayment.model";
 import Cart from "../ServiceModule/CartModule/Cart.model";
 import Order from "../OrderModule/order.model";
 export class EcomPaymentController {
+  private normalizeFingerprintItems(
+    items: Array<{ productId: string; quantity: number }> | Array<{ product: any; quantity: number }>
+  ): string {
+    const safe = Array.isArray(items) ? items : [];
+    return safe
+      .map((item: any) => {
+        const productId = String(item?.productId || item?.product || "").trim();
+        const qty = Number(item?.quantity || 0);
+        if (!productId || !Number.isFinite(qty) || qty <= 0) return null;
+        return `${productId}:${qty}`;
+      })
+      .filter(Boolean)
+      .sort()
+      .join("|");
+  }
+
+  private getLocalDayRange(date: Date) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
+  private async hasSameOrderToday(
+    userId: string,
+    fingerprint: string
+  ): Promise<boolean> {
+    if (!fingerprint) return false;
+    const { start, end } = this.getLocalDayRange(new Date());
+
+    // Fetch minimal data for today's orders and compare normalized items.
+    const todaysOrders = await Order.find({
+      userId,
+      createdAt: { $gte: start, $lte: end },
+    })
+      .select("items orderFingerprint createdAt")
+      .lean();
+
+    for (const order of todaysOrders || []) {
+      const existingFp = String((order as any).orderFingerprint || "");
+      if (existingFp && existingFp === fingerprint) return true;
+
+      const items = Array.isArray((order as any).items) ? (order as any).items : [];
+      const orderFp = this.normalizeFingerprintItems(
+        items.map((it: any) => ({
+          productId: it?.product?.toString?.() || String(it?.product || "").trim(),
+          quantity: Number(it?.quantity || 0),
+        }))
+      );
+      if (orderFp && orderFp === fingerprint) return true;
+    }
+
+    return false;
+  }
+
+  private async hasAnyOrderToday(userId: string): Promise<boolean> {
+    const { start, end } = this.getLocalDayRange(new Date());
+    const count = await Order.countDocuments({
+      userId,
+      createdAt: { $gte: start, $lte: end },
+    });
+    return count > 0;
+  }
+
   private splitName(fullName?: string): { firstName: string; lastName: string } {
     const safe = String(fullName || "").trim();
     if (!safe) return { firstName: "Customer", lastName: "" };
@@ -71,6 +136,25 @@ export class EcomPaymentController {
       const checkoutEmail =
         String(shippingAddress?.email || "").trim().toLowerCase() ||
         String((user as any).email || "").trim().toLowerCase();
+
+      const fingerprint = this.normalizeFingerprintItems(
+        cart.items.map((item: any) => ({
+          productId: item.product?.toString?.() || String(item.product),
+          quantity: item.quantity,
+        }))
+      );
+      if (await this.hasAnyOrderToday(userId)) {
+        return res.status(409).json({
+          success: false,
+          message: "You already placed an order today. Please try again tomorrow.",
+        });
+      }
+      if (await this.hasSameOrderToday(userId, fingerprint)) {
+        return res.status(409).json({
+          success: false,
+          message: "You already placed the same order today",
+        });
+      }
 
       const result = await EcomStripeService.createEcomCheckoutSession(
         userId,
@@ -194,6 +278,25 @@ export class EcomPaymentController {
         return res.status(400).json({
           success: false,
           message: "Order items are invalid for reorder",
+        });
+      }
+
+      const fingerprint = this.normalizeFingerprintItems(
+        cartItems.map((item: any) => ({
+          productId: item.productId,
+          quantity: item.quantity,
+        }))
+      );
+      if (await this.hasAnyOrderToday(userId)) {
+        return res.status(409).json({
+          success: false,
+          message: "You already placed an order today. Please try again tomorrow.",
+        });
+      }
+      if (await this.hasSameOrderToday(userId, fingerprint)) {
+        return res.status(409).json({
+          success: false,
+          message: "You already placed the same order today",
         });
       }
 

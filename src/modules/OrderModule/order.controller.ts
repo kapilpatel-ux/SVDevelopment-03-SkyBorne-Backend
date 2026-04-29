@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import mongoose from "mongoose";
+import crypto from "crypto";
 import Order from "./order.model";
 import Product from "../ProductModule/product.models";
 import Customer from "../CustomerModule/customer.model";
@@ -12,6 +13,30 @@ import {
 } from "../../services/ecomOrderEmail.service";
 
 export class OrderController {
+  private buildOrderFingerprint(items: any[]): string {
+    const safeItems = Array.isArray(items) ? items : [];
+    const normalized = safeItems
+      .map((item) => {
+        const productId = String(item?.product || "").trim();
+        const qty = Number(item?.quantity || 0);
+        if (!productId || !Number.isFinite(qty) || qty <= 0) return null;
+        return `${productId}:${qty}`;
+      })
+      .filter(Boolean)
+      .sort()
+      .join("|");
+
+    return crypto.createHash("sha256").update(normalized).digest("hex");
+  }
+
+  private getLocalDayRange(date: Date) {
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }
+
   /* ============================= */
   /* PLACE ORDER */
   /* ============================= */
@@ -51,6 +76,30 @@ export class OrderController {
         return res.status(400).json({
           success: false,
           message: "Order items are required",
+        });
+      }
+
+      /* ============================= */
+      /* PREVENT DUPLICATE ORDER (SAME DAY) */
+      /* ============================= */
+      const orderFingerprint = this.buildOrderFingerprint(items);
+      const { start, end } = this.getLocalDayRange(new Date());
+      const existingOrder = await Order.findOne({
+        userId,
+        orderFingerprint,
+        createdAt: { $gte: start, $lte: end },
+      }).session(session);
+
+      if (existingOrder) {
+        console.warn(
+          "🟡 [PlaceOrder] Duplicate order attempt blocked for user:",
+          userId
+        );
+        await session.abortTransaction();
+        session.endSession();
+        return res.status(409).json({
+          success: false,
+          message: "You already placed the same order today",
         });
       }
 
@@ -132,6 +181,7 @@ export class OrderController {
         [
           {
             orderNumber: `ORD-${Date.now()}`,
+            orderFingerprint,
             userId,
             customerId: customer.id,
             items: orderItems,

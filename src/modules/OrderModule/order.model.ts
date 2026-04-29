@@ -27,6 +27,7 @@ export interface IOrder {
   _id: mongoose.Types.ObjectId;
 
   orderNumber: string;
+  orderFingerprint?: string;
 
   userId: mongoose.Types.ObjectId;
   customerId: mongoose.Types.ObjectId;
@@ -106,6 +107,12 @@ const orderSchema = new mongoose.Schema(
       type: String,
       required: true,
       unique: true,
+      index: true,
+    },
+
+    orderFingerprint: {
+      type: String,
+      trim: true,
       index: true,
     },
 
@@ -226,6 +233,7 @@ const orderSchema = new mongoose.Schema(
 /* INDEXES (IMPORTANT) */
 /* ============================= */
 orderSchema.index({ userId: 1, createdAt: -1 });
+orderSchema.index({ userId: 1, orderFingerprint: 1, createdAt: -1 });
 orderSchema.index({ orderStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
 
