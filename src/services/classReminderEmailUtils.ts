@@ -633,7 +633,7 @@ export const getClassReminderEmailHTML = (
                     </a>
                     
                   </td>
-                  <p>The Link : ${appOpenLink}</p>
+                  <p> # The Link : ${appOpenLink}</p>
                 </tr>
               </table>
             </div>
