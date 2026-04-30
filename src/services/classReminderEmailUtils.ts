@@ -299,6 +299,7 @@ export const getClassReminderEmailSubject = (
   }!`;
 
 const DEFAULT_DASHBOARD_URL = "https://app.skybornedrop.com/dashboard";
+const DEFAULT_OPEN_IN_APP_BASE_URL = "https://app.skybornedrop.com/open/class";
 export const CLASS_REMINDER_TEMPLATE_VERSION = "v2026-04-30";
 
 const normalizeDashboardPath = (pathname: string): string => {
@@ -341,6 +342,23 @@ const getClassReminderDashboardUrl = (): string => {
   }
 };
 
+const getClassReminderOpenInAppUrl = (meetingId?: string): string => {
+  const safeMeetingId = String(meetingId || "").trim();
+  const dashboardUrl = getClassReminderDashboardUrl();
+
+  if (!safeMeetingId) {
+    return dashboardUrl;
+  }
+
+  const rawBaseUrl = String(process.env.OPEN_IN_APP_BASE_URL || "").trim();
+  const normalizedBaseUrl = (rawBaseUrl || DEFAULT_OPEN_IN_APP_BASE_URL).replace(
+    /\/+$/,
+    "",
+  );
+
+  return `${normalizedBaseUrl}/${encodeURIComponent(safeMeetingId)}`;
+};
+
 export const getClassReminderEmailHTML = (
   firstName: string,
   meetingTitle: string,
@@ -356,10 +374,7 @@ export const getClassReminderEmailHTML = (
 ): string => {
   const webLink = getClassReminderDashboardUrl();
   const safeMeetingId = String(meetingId || "").trim();
-  const appLink = safeMeetingId
-    ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
-    : "";
-  const appOpenLink = appLink || webLink;
+  const appOpenLink = getClassReminderOpenInAppUrl(safeMeetingId) || webLink;
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -631,9 +646,7 @@ export const getClassReminderEmailHTML = (
                     <a href="${appOpenLink}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%;">
                       Open in App
                     </a>
-                    
                   </td>
-                  <p> # The Link : ${appOpenLink}</p>
                 </tr>
               </table>
             </div>
