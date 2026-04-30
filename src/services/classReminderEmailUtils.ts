@@ -1,3 +1,5 @@
+// src/services/classReminderEmailUtils.ts
+
 import { getCode } from "country-list";
 import {
   COUNTRY_TIMEZONE_MAP,
@@ -354,10 +356,9 @@ export const getClassReminderEmailHTML = (
 ): string => {
   const webLink = getClassReminderDashboardUrl();
   const safeMeetingId = String(meetingId || "").trim();
-   const appLink=null;
-  // const appLink = safeMeetingId
-  //   ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
-  //   : "";
+  const appLink = safeMeetingId
+    ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
+    : "";
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -494,15 +495,16 @@ export const getClassReminderEmailHTML = (
         }
 
         .cta-button--secondary {
-            background-color: #ffffff;
-            color: #c94a7f;
-            border: 2px solid #c94a7f;
+            background-color: #ffffff !important;
+            color: #c94a7f !important;
+            border: 2px solid #c94a7f !important;
+            cursor: pointer !important;
         }
 
         .cta-button--secondary:hover {
-            background-color: #fff6fa;
-            color: #b03a6f;
-            border-color: #b03a6f;
+            background-color: #fff6fa !important;
+            color: #b03a6f !important;
+            border-color: #b03a6f !important;
         }
 
         .reminder-box {
@@ -625,7 +627,7 @@ export const getClassReminderEmailHTML = (
                   appLink
                     ? `
                 <div style="height: 12px; line-height: 12px;">&nbsp;</div>
-                <a href="${appLink}" class="cta-button cta-button--secondary">
+                <a href="${appLink}" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; border: 2px solid #c94a7f; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%; margin-top: 12px;">
                     View Class In App
                 </a>
                   `
