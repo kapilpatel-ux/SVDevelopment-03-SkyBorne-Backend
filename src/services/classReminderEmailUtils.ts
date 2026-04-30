@@ -298,7 +298,9 @@ export const getClassReminderEmailSubject = (
       : `${reminderOffsetMinutes} minutes`
   }!`;
 
-const DEFAULT_DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.WEBSITE_URL ? `${(process.env.DASHBOARD_URL || process.env.WEBSITE_URL).replace(/\/$/, "")}/dashboard` : "https://sky-borne.vercel.app/dashboard";
+const DEFAULT_DASHBOARD_URL = (process.env.DASHBOARD_URL || process.env.WEBSITE_URL)
+  ? `${String(process.env.DASHBOARD_URL || process.env.WEBSITE_URL).replace(/\/$/, "")}/dashboard`
+  : "https://sky-borne.vercel.app/dashboard";
 export const CLASS_REMINDER_TEMPLATE_VERSION = "v2026-04-30";
 
 const normalizeDashboardPath = (pathname: string): string => {
