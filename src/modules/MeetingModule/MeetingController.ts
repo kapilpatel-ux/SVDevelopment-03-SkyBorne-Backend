@@ -2141,13 +2141,8 @@ static async GetMeetingRecording(req: Request, res: Response) {
         await attendance.save();
       }
 
-      PushNotificationService.sendBookingConfirmed(String(userId), {
-        meetingId: String(meeting._id),
-        meetingTitle: meeting.title,
-        localTime: new Date(meeting.localTime),
-      }).catch((error: any) => {
-        console.error("❌ Failed to send booking-confirmed push notification:", error?.message || error);
-      });
+      // Booking confirmed push removed from Join Class flow.
+      // This endpoint should only join the session and return access details.
 
       return res.json({
         success: true,
