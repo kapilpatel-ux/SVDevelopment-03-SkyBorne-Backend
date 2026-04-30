@@ -298,8 +298,7 @@ export const getClassReminderEmailSubject = (
       : `${reminderOffsetMinutes} minutes`
   }!`;
 
-const DEFAULT_DASHBOARD_URL = "https://app.skybornedrop.com/dashboard";
-const DEFAULT_OPEN_IN_APP_BASE_URL = "https://app.skybornedrop.com/open/class";
+const DEFAULT_DASHBOARD_URL = process.env.DASHBOARD_URL || process.env.WEBSITE_URL ? `${(process.env.DASHBOARD_URL || process.env.WEBSITE_URL).replace(/\/$/, "")}/dashboard` : "https://sky-borne.vercel.app/dashboard";
 export const CLASS_REMINDER_TEMPLATE_VERSION = "v2026-04-30";
 
 const normalizeDashboardPath = (pathname: string): string => {
@@ -318,17 +317,13 @@ const normalizeDashboardPath = (pathname: string): string => {
 };
 
 const getClassReminderDashboardUrl = (): string => {
-  const rawDashboardUrl = String(process.env.DASHBOARD_URL || "").trim();
-
+  const rawDashboardUrl = String(process.env.DASHBOARD_URL || process.env.WEBSITE_URL || "").trim();
   if (!rawDashboardUrl) {
     return DEFAULT_DASHBOARD_URL;
   }
-
   try {
     const parsedDashboardUrl = new URL(rawDashboardUrl);
-    parsedDashboardUrl.pathname = normalizeDashboardPath(
-      parsedDashboardUrl.pathname,
-    );
+    parsedDashboardUrl.pathname = normalizeDashboardPath(parsedDashboardUrl.pathname);
     parsedDashboardUrl.search = "";
     parsedDashboardUrl.hash = "";
     return parsedDashboardUrl.toString();
@@ -337,26 +332,8 @@ const getClassReminderDashboardUrl = (): string => {
     const normalizedBaseUrl = sanitizedDashboardUrl
       .replace(/(?:\/dashboard)+\/?$/i, "")
       .replace(/\/+$/, "");
-
-    return `${normalizedBaseUrl || "https://app.skybornedrop.com"}/dashboard`;
+    return `${normalizedBaseUrl || "https://sky-borne.vercel.app"}/dashboard`;
   }
-};
-
-const getClassReminderOpenInAppUrl = (meetingId?: string): string => {
-  const safeMeetingId = String(meetingId || "").trim();
-  const dashboardUrl = getClassReminderDashboardUrl();
-
-  if (!safeMeetingId) {
-    return dashboardUrl;
-  }
-
-  const rawBaseUrl = String(process.env.OPEN_IN_APP_BASE_URL || "").trim();
-  const normalizedBaseUrl = (rawBaseUrl || DEFAULT_OPEN_IN_APP_BASE_URL).replace(
-    /\/+$/,
-    "",
-  );
-
-  return `${normalizedBaseUrl}/${encodeURIComponent(safeMeetingId)}`;
 };
 
 export const getClassReminderEmailHTML = (
@@ -374,7 +351,15 @@ export const getClassReminderEmailHTML = (
 ): string => {
   const webLink = getClassReminderDashboardUrl();
   const safeMeetingId = String(meetingId || "").trim();
-  const appOpenLink = getClassReminderOpenInAppUrl(safeMeetingId) || webLink;
+  // Universal/App Link fallback (use WEBSITE_URL or DASHBOARD_URL env if available)
+  const baseWebUrl = (process.env.WEBSITE_URL || process.env.DASHBOARD_URL || "https://sky-borne.vercel.app").replace(/\/$/, "");
+  const universalAppLink = safeMeetingId
+    ? `${baseWebUrl}/class/${encodeURIComponent(safeMeetingId)}`
+    : webLink;
+  // Custom scheme for deep linking
+  const appLink = safeMeetingId
+    ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
+    : "";
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -393,6 +378,7 @@ export const getClassReminderEmailHTML = (
     Number.isFinite(Number(duration)) && Number(duration) > 0
       ? `${Number(duration)} minutes`
       : "TBD";
+
 
   return `
 <!DOCTYPE html>
@@ -635,24 +621,21 @@ export const getClassReminderEmailHTML = (
                 Make sure to join 5 minutes before the class starts!
             </div>
 
+
             <div class="cta-section">
-              <a href="${webLink}" class="cta-button" target="_blank" rel="noopener noreferrer">
+                <a href="${universalAppLink}" class="cta-button">
                     View Class
                 </a>
-              <div style="height: 12px; line-height: 12px;">&nbsp;</div>
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto; border-collapse: separate;">
-                <tr>
-                  <td align="center" style="background-color: #ffffff; border: 2px solid #c94a7f; border-radius: 6px;">
-                    <a href="${appOpenLink}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%;">
-                      Open in App
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </div>
-
+                ${
+                  appLink
+                    ${
+                      appLink
+                        ? `<div style=\"height: 12px; line-height: 12px;\">&nbsp;</div>
+                    <a href=\"${appLink}\" style=\"display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; border: 2px solid #c94a7f; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%; margin-top: 12px;\">Open in App (if installed)</a>`
+                        : ""
+                    }
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
-                Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
+              Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
             </p>
         </div>
 
