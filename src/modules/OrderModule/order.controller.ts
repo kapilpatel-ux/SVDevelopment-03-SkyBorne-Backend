@@ -478,7 +478,7 @@ export class OrderController {
       console.log("🔵 [UpdateOrderStatus] New status:", req.body.orderStatus);
 
       const { orderId } = req.params;
-      const { orderStatus } = req.body;
+      const { orderStatus, trackingNumber } = req.body;
 
       const order = await Order.findById(orderId);
 
@@ -495,6 +495,9 @@ export class OrderController {
 
       const previousStatus = String(order.orderStatus || "");
       order.orderStatus = orderStatus;
+      if (typeof trackingNumber === "string") {
+        order.trackingNumber = trackingNumber.trim();
+      }
 
       if (orderStatus === "Delivered") {
         order.deliveredAt = new Date();
