@@ -46,6 +46,7 @@ export interface IOrder {
 
   orderStatus: OrderStatus;
   trackingNumber?: string;
+  shippingProvider?: string;
 
   shippingAddress: {
     fullName: string;
@@ -203,6 +204,11 @@ const orderSchema = new mongoose.Schema(
       index: true,
     },
     trackingNumber: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    shippingProvider: {
       type: String,
       trim: true,
       default: "",
