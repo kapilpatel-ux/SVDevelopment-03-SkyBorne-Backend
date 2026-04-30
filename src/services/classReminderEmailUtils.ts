@@ -297,6 +297,7 @@ export const getClassReminderEmailSubject = (
   }!`;
 
 const DEFAULT_DASHBOARD_URL = "https://app.skybornedrop.com/dashboard";
+export const CLASS_REMINDER_TEMPLATE_VERSION = "v2026-04-30";
 
 const normalizeDashboardPath = (pathname: string): string => {
   const trimmedPath = String(pathname || "").trim();
@@ -564,7 +565,7 @@ export const getClassReminderEmailHTML = (
 </head>
 <body>
     <span style="display:none !important; visibility:hidden; opacity:0; color:transparent; height:0; width:0; overflow:hidden;">
-        SKYBORNE_CLASS_REMINDER_TEMPLATE=v2026-04-20
+        SKYBORNE_CLASS_REMINDER_TEMPLATE=${CLASS_REMINDER_TEMPLATE_VERSION}
     </span>
     <div class="container">
         <div class="header">

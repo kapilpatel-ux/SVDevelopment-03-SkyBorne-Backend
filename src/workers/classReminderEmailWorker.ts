@@ -5,6 +5,7 @@ import { classReminderEmailQueue } from "../services/queues/classReminderEmailQu
 import sgMail from "@sendgrid/mail";
 import { initConsoleErrorLogger } from "../utils/consoleLogger";
 import {
+  CLASS_REMINDER_TEMPLATE_VERSION,
   formatMeetingDateTimeForUser,
   getClassReminderEmailHTML,
   getClassReminderEmailSubject,
@@ -93,7 +94,7 @@ classReminderEmailQueue.process(async (job) => {
       successCount++;
 
       console.log(
-        `✅ Class reminder email sent to ${email} for meeting ${meetingId}`
+        `✅ Class reminder email sent to ${email} for meeting ${meetingId} using template ${CLASS_REMINDER_TEMPLATE_VERSION}`
       );
     } catch (err: any) {
       failureCount++;
