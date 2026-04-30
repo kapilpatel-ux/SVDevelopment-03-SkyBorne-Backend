@@ -6,6 +6,7 @@ import { addClassReminderEmailJob } from "./queues/classReminderEmailQueue";
 import { IMeeting } from "../modules/MeetingModule/MeetingModels/Meeting";
 import regionModel from "../modules/RegionModule/region.model";
 import { PushNotificationService } from "./pushNotification.service";
+import { COUNTRY_TIMEZONE_MAP } from "../constants/countryTimezoneMap";
 
 const resolveMeetingRegionDetails = (
   meeting: IPopulatedMeeting | IMeeting,
@@ -35,6 +36,68 @@ const resolveMeetingRegionDetails = (
     regionLocalTime: String(bestMatch?.localTime || "").trim(),
     regionLocalDate: String(bestMatch?.date || "").trim(),
   };
+};
+
+/**
+ * Resolve user's timezone with fallback to country-based timezone
+ */
+const resolveUserTimezone = (user: any): string => {
+  // Check if user has explicit timezone set
+  const userTimezone = String(user?.timeZone || "").trim();
+  if (userTimezone && userTimezone !== "null" && userTimezone !== "") {
+    try {
+      new Intl.DateTimeFormat("en-US", { timeZone: userTimezone }).format(
+        new Date(),
+      );
+      return userTimezone;
+    } catch {
+      console.warn(`[ClassReminderService] Invalid timezone for user: ${userTimezone}`);
+    }
+  }
+
+  // Fallback to country code based timezone
+  const countryCode = String(user?.countryCode || "").toUpperCase().trim();
+  if (countryCode && COUNTRY_TIMEZONE_MAP[countryCode]) {
+    return COUNTRY_TIMEZONE_MAP[countryCode];
+  }
+
+  // Default to UTC if nothing else works
+  console.warn(
+    `[ClassReminderService] Could not resolve timezone for user ${user._id}, defaulting to UTC`,
+  );
+  return "UTC";
+};
+
+/**
+ * Get timezone abbreviation (IST, GST, UTC, etc.)
+ */
+const getTimezoneAbbreviation = (timezone: string): string => {
+  const abbreviationMap: Record<string, string> = {
+    "Asia/Kolkata": "IST",
+    "Asia/Dubai": "GST",
+    "Asia/Bangkok": "ICT",
+    "Asia/Singapore": "SGT",
+    "Asia/Hong_Kong": "HKT",
+    "Asia/Tokyo": "JST",
+    "Asia/Seoul": "KST",
+    "Australia/Sydney": "AEDT",
+    "Europe/London": "GMT",
+    "America/New_York": "EST",
+    "America/Los_Angeles": "PST",
+    UTC: "UTC",
+  };
+
+  if (abbreviationMap[timezone]) {
+    return abbreviationMap[timezone];
+  }
+
+  // Try to extract abbreviation from timezone name
+  const parts = timezone.split("/");
+  if (parts.length > 1) {
+    return parts[1].substring(0, 3).toUpperCase();
+  }
+
+  return timezone;
 };
 
 export class ClassReminderService {
@@ -255,82 +318,181 @@ static async getCountriesByRegion(regionName: string) {
         userEmails: uniqueUserEmails,
       };
 
-      try {
-        await addClassReminderEmailJob(reminderJobPayload);
-      } catch (queueError: any) {
-        console.error("[ClassReminderService] Queue add failed", {
+      // Skip sending reminder emails at event time (0-minute); only send earlier reminders.
+      if (minutesBefore === 0) {
+        console.log("[ClassReminderService] sendClassReminder:skip-email-at-event", {
           meetingId: (meeting._id as string).toString(),
           minutesBefore,
-          error: queueError?.message || queueError,
         });
-        throw queueError;
+      } else {
+        try {
+          await addClassReminderEmailJob(reminderJobPayload);
+        } catch (queueError: any) {
+          console.error("[ClassReminderService] Queue add failed", {
+            meetingId: (meeting._id as string).toString(),
+            minutesBefore,
+            error: queueError?.message || queueError,
+          });
+          throw queueError;
+        }
       }
 
       const pushUserIds = uniqueUserEmails
         .map((entry: any) => String(entry.userId || "").trim())
         .filter(Boolean);
 
-      const shouldSendPushReminder = [30, 10].includes(minutesBefore);
+      const shouldSendPushReminder = [1440, 30, 0].includes(minutesBefore);
 
+      // Send push reminders with localized times per user
       if (pushUserIds.length > 0 && shouldSendPushReminder) {
-        PushNotificationService.sendSessionReminderToUsers(pushUserIds, {
-          meetingId: (meeting._id as string).toString(),
-          meetingTitle: meeting.title,
+        const meetingIdString = (meeting._id as string).toString();
+        const classStartAt = new Date(meeting.localTime);
+
+        console.log("[ClassReminderService] sendClassReminder:push-start", {
+          meetingId: meetingIdString,
           minutesBefore,
-          classStartAt: new Date(meeting.localTime),
-          region,
-        }).catch((pushError: any) => {
-          console.error("❌ Failed to send class reminder push notification:", pushError?.message || pushError);
+          totalUsers: pushUserIds.length,
         });
-      } else if (pushUserIds.length > 0 && !shouldSendPushReminder) {
-        console.log("[ClassReminderService] push reminder skipped for offset", {
-          meetingId: (meeting._id as string).toString(),
+
+        // Fetch full user data with timezone for each user
+        const usersForPush = await User.find({
+          _id: { $in: pushUserIds },
+        }).select("_id timeZone country countryCode email firstName lastName");
+
+        console.log("[ClassReminderService] sendClassReminder:users-fetched-for-push", {
+          meetingId: meetingIdString,
+          usersFetched: usersForPush.length,
+          expectedUsers: pushUserIds.length,
+        });
+
+        // Create a map for quick timezone lookup using resolveUserTimezone helper
+        const userToTimezone = new Map<string, string>();
+        for (const user of usersForPush) {
+          const userId = (user._id as any)?.toString?.() || String(user._id as unknown);
+          const tz = resolveUserTimezone(user);
+          userToTimezone.set(userId, tz);
+
+          console.log("[ClassReminderService] sendClassReminder:user-timezone-resolved", {
+            userId: userId.substring(0, 8) + "...",
+            timezone: tz,
+            country: user.country,
+            countryCode: user.countryCode,
+            storedTimeZone: user.timeZone || "NOT_SET",
+          });
+        }
+
+        // Send notification to each user with their localized time
+        for (const userId of pushUserIds) {
+          try {
+            const userTimezone = userToTimezone.get(userId) || "UTC";
+            const tzAbbr = getTimezoneAbbreviation(userTimezone);
+            const localTimeStr = classStartAt.toLocaleTimeString("en-US", {
+              timeZone: userTimezone,
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: true,
+            });
+            const localTimeWithTZ = `${localTimeStr} ${tzAbbr}`;
+
+            let title: string;
+            let body: string;
+
+            if (minutesBefore === 0) {
+              title = "We're live now! 🚀";
+              body = `We're live now! (${localTimeWithTZ}) Jump in and give yourself this moment of energy and focus 💪`;
+            } else {
+              title = "Almost time to move! 🕒";
+              body = `Hey there, ${meeting.title} starts in ${minutesBefore} minutes (${localTimeWithTZ}). Get ready to make the most of it 💡`;
+            }
+
+            console.log("[ClassReminderService] sendClassReminder:sending-to-user", {
+              meetingId: meetingIdString,
+              userId: userId.substring(0, 8) + "...",
+              resolvedTimezone: userTimezone,
+              timezoneAbbr: tzAbbr,
+              localTime: localTimeWithTZ,
+              minutesBefore,
+              bodyPreview: body.substring(0, 60) + "...",
+            });
+
+            await PushNotificationService.sendToUsers(
+              [userId],
+              {
+                title,
+                body,
+                highPriority: true,
+                data: {
+                  type: "meeting.reminder",
+                  screen: "ClassDetails",
+                  classId: meetingIdString,
+                  deeplink: `skybornedrop://class/${meetingIdString}`,
+                  meetingId: meetingIdString,
+                  minutesBefore: String(minutesBefore),
+                  classStartAt: classStartAt.toISOString(),
+                  region,
+                  displayTime: localTimeWithTZ,
+                  userTimezone: userTimezone,
+                  timezoneAbbr: tzAbbr,
+                },
+              },
+              {
+                category: "reminder",
+                eventType: "meeting.reminder",
+                metadata: {
+                  meetingId: meetingIdString,
+                  minutesBefore,
+                  region,
+                  timezone: userTimezone,
+                  userId,
+                },
+              },
+            );
+          } catch (pushError: any) {
+            console.error(
+              "[ClassReminderService] Failed to send push to user:",
+              {
+                userId: userId.substring(0, 8) + "...",
+                meetingId: meetingIdString,
+                error: pushError?.message || pushError,
+              },
+            );
+          }
+        }
+
+        console.log("[ClassReminderService] sendClassReminder:push-complete", {
+          meetingId: meetingIdString,
           minutesBefore,
+          usersProcessed: pushUserIds.length,
         });
       }
-
-      console.log(
-        `✅ Class reminder job queued for ${uniqueUserEmails.length} users. Meeting: ${meeting.title}`,
-      );
-
-      return {
-        success: true,
-        message: `Reminder emails queued for ${uniqueUserEmails.length} users`,
-        emailsSent: uniqueUserEmails.length,
-      };
     } catch (error) {
-      console.error(`❌ Error sending class reminder:`, error);
+      console.error("❌ Error in sendClassReminder:", error);
       throw error;
     }
   }
 
-  /**
-   * Send reminder emails to all users in a meeting's region
-   * This can be called manually from the API endpoint
-   * @param meetingId - The ID of the meeting
-   */
   static async sendImmediateClassReminder(meetingId: string) {
-    try {
-      console.log("[ClassReminderService] sendImmediateClassReminder:start", { meetingId });
+      try {
+        console.log("[ClassReminderService] sendImmediateClassReminder:start", { meetingId });
 
-      const meeting = (await Meeting.findById(meetingId)
-        .populate("trainer", "name")
-        .populate("service", "title")) as IMeeting & {
-        trainer?: { name: string };
-        service?: { title: string };
-      };
+        const meeting = (await Meeting.findById(meetingId)
+          .populate("trainer", "name")
+          .populate("service", "title")) as IMeeting & {
+          trainer?: { name: string };
+          service?: { title: string };
+        };
 
-      if (!meeting) {
-        return { success: false, message: "Meeting not found" };
-      }
+        if (!meeting) {
+          return { success: false, message: "Meeting not found" };
+        }
 
-      const region = meeting.liveRegion;
-      console.log("[ClassReminderService] sendImmediateClassReminder:meeting-found", {
-        meetingId: (meeting._id as string)?.toString?.() || meetingId,
-        title: meeting.title,
-        region,
-        localTime: meeting.localTime,
-      });
+        const region = meeting.liveRegion;
+        console.log("[ClassReminderService] sendImmediateClassReminder:meeting-found", {
+          meetingId: (meeting._id as string)?.toString?.() || meetingId,
+          title: meeting.title,
+          region,
+          localTime: meeting.localTime,
+        });
 
       const users = await this.getUsersByRegion(region);
 

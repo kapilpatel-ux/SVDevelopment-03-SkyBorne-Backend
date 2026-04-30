@@ -6,6 +6,7 @@ import Meeting from "../modules/MeetingModule/MeetingModels/Meeting";
 import User from "../modules/UserModule/models/User";
 import MeetingParticipant from "../modules/MeetingModule/MeetingModels/MeetingParticipant"; // New model
 import Service from "../modules/ServiceModule/models/Service";
+import { PushNotificationService } from "../services/pushNotification.service";
 
 type TitleType = "yoga" | "zumba" | "specialty";
 const router = express.Router();
@@ -89,11 +90,49 @@ router.post("/zoom-webhook", async (req, res) => {
       const mp4File = files.find((f: any) => f.file_type === "MP4");
       if (!mp4File?.download_url) return res.status(200).send("OK");
 
-      await Meeting.findByIdAndUpdate(meetingDoc._id, {
-        recordingUrl: mp4File.download_url,
-        status: "completed",
-        isLive: false,
-      });
+      const updatedMeeting = await Meeting.findByIdAndUpdate(
+        meetingDoc._id,
+        {
+          recordingUrl: mp4File.download_url,
+          status: "completed",
+          isLive: false,
+        },
+        { new: true }
+      );
+
+      // Send push notification that recording is available to participants
+      if (updatedMeeting) {
+        try {
+          const participants = await MeetingParticipant.find({ meetingId: updatedMeeting._id }).select(
+            "userId",
+          );
+
+          const userIds = Array.from(
+            new Set(
+              participants
+                .map((p: any) => (p.userId ? String(p.userId) : null))
+                .filter((id): id is string => Boolean(id)),
+            ),
+          );
+
+          if (userIds.length) {
+            await PushNotificationService.sendSessionRecordingAvailable(userIds, {
+              meetingId: String(updatedMeeting._id),
+              meetingTitle: updatedMeeting.title,
+              recordingUrl: mp4File.download_url,
+            });
+          } else if (updatedMeeting.trainer) {
+            // Fallback: notify trainer if no participant userIds found
+            await PushNotificationService.sendSessionRecordingAvailable([String(updatedMeeting.trainer)], {
+              meetingId: String(updatedMeeting._id),
+              meetingTitle: updatedMeeting.title,
+              recordingUrl: mp4File.download_url,
+            });
+          }
+        } catch (error: any) {
+          console.error("❌ Failed to send recording available push notification:", error?.message || error);
+        }
+      }
 
       return res.status(200).send("OK");
     } catch {

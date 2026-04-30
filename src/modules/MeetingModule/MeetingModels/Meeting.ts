@@ -29,6 +29,7 @@ export interface IMeeting extends Document {
   reminder30MinSent?: boolean;
   reminder10MinSent?: boolean;
   reminder24HourSent?: boolean;
+  reminderOnEventSent?: boolean;
   occurrenceId?: string;
 
   // Dynamic region grid
@@ -101,6 +102,11 @@ const MeetingSchema = new Schema<IPopulatedMeeting>(
       default: false,
     },
     reminder24HourSent: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+    reminderOnEventSent: {
       type: Boolean,
       required: false,
       default: false,

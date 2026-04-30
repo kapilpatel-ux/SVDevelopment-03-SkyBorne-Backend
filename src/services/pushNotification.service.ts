@@ -448,6 +448,17 @@ export class PushNotificationService {
     region: string;
     localTime?: Date;
   }) {
+    if (params.action === "cancelled") {
+      // Cancellation notifications are intentionally disabled.
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "meeting_cancel_notifications_disabled",
+      };
+    }
+
     const userIds = await this.resolveUserIdsByRegion(params.region);
 
     const titleMap = {
@@ -490,6 +501,17 @@ export class PushNotificationService {
     meetingTitle: string;
     localTime?: Date;
   }) {
+    if (params.action === "cancelled") {
+      // Cancellation notifications are intentionally disabled.
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "meeting_cancel_notifications_disabled",
+      };
+    }
+
     const userIds = await this.resolveUserIdsByMeeting(params.meetingId);
 
     const titleMap = {
@@ -543,6 +565,7 @@ export class PushNotificationService {
       minutesBefore: number;
       classStartAt: Date;
       region: string;
+      userTimezones?: Map<string, string>;
     },
   ) {
     console.log("📨 [PushNotificationService] sendSessionReminderToUsers:start", {
@@ -552,11 +575,18 @@ export class PushNotificationService {
       region: params.region,
     });
 
+    // Determine message based on reminder offset
+    const isLiveNow = params.minutesBefore === 0;
+    const reminderTitle = isLiveNow ? "We're live now! 🚀" : "Almost time to move! 🕒";
+    const reminderBody = isLiveNow
+      ? `We're live now! Jump in and give yourself this moment of energy and focus 💪`
+      : `Hey there, ${params.meetingTitle} starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). Get ready to make the most of it 💡`;
+
     const result = await this.sendToUsers(
       userIds,
       {
-        title: "Almost time to move! 🕒",
-        body: `Hey there, ${params.meetingTitle} starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). Get ready to make the most of it 💡`,
+        title: reminderTitle,
+        body: reminderBody,
         highPriority: true,
         data: {
           type: "meeting.reminder",
@@ -577,6 +607,55 @@ export class PushNotificationService {
     );
 
     console.log("📨 [PushNotificationService] sendSessionReminderToUsers:done", {
+      meetingId: params.meetingId,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    });
+
+    return result;
+  }
+
+  static async sendLiveNowSessionReminderToUsers(
+    userIds: string[],
+    params: {
+      meetingId: string;
+      meetingTitle: string;
+      classStartAt: Date;
+      region: string;
+    },
+  ) {
+    console.log("📨 [PushNotificationService] sendLiveNowSessionReminderToUsers:start", {
+      meetingId: params.meetingId,
+      userCount: userIds.length,
+      meetingTitle: params.meetingTitle,
+      region: params.region,
+    });
+
+    const result = await this.sendToUsers(
+      userIds,
+      {
+        title: "We’re live now! 🚀",
+        body: "We’re live now! Jump in and give yourself this moment of energy and focus 💪",
+        highPriority: true,
+        data: {
+          type: "meeting.reminder",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          minutesBefore: "0",
+          classStartAt: params.classStartAt.toISOString(),
+          region: params.region,
+        },
+      },
+      {
+        category: "reminder",
+        eventType: "meeting.reminder",
+        metadata: params,
+      },
+    );
+
+    console.log("📨 [PushNotificationService] sendLiveNowSessionReminderToUsers:done", {
       meetingId: params.meetingId,
       successCount: result.successCount,
       failureCount: result.failureCount,
@@ -816,6 +895,41 @@ export class PushNotificationService {
       {
         category: "transactional",
         eventType: "booking.cancelled",
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendSessionRecordingAvailable(
+    userIds: string[],
+    params: {
+      meetingId: string;
+      meetingTitle: string;
+      recordingUrl?: string;
+    },
+  ) {
+    if (!userIds.length) {
+      return { successCount: 0, failureCount: 0, invalidTokens: [] as string[] };
+    }
+
+    return this.sendToUsers(
+      userIds,
+      {
+        title: "🎬 Recording Available",
+        body: "Missed it or want more? Your session recording is ready—watch anytime and stay on track 📹",
+        highPriority: false,
+        data: {
+          type: "session.recording_available",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          recordingUrl: params.recordingUrl || "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: "session.recording_available",
         metadata: params,
       },
     );

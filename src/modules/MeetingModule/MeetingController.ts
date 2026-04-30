@@ -798,15 +798,15 @@ static async CreateMeeting(req: Request, res: Response) {
       message: responseMessage,
     });
 
-    PushNotificationService.sendMeetingLifecycleToRegion({
-      action: "created",
-      meetingId: String(meetingRecord._id),
-      meetingTitle: meetingRecord.title,
-      region: meetingRecord.liveRegion,
-      localTime: new Date(meetingRecord.localTime),
-    }).catch((error: any) => {
-      console.error("❌ Failed to send meeting-created push notification:", error?.message || error);
-    });
+    // PushNotificationService.sendMeetingLifecycleToRegion({
+    //   action: "created",
+    //   meetingId: String(meetingRecord._id),
+    //   meetingTitle: meetingRecord.title,
+    //   region: meetingRecord.liveRegion,
+    //   localTime: new Date(meetingRecord.localTime),
+    // }).catch((error: any) => {
+    //   console.error("❌ Failed to send meeting-created push notification:", error?.message || error);
+    // });
 
     return res.json({
       success: true,
@@ -3905,24 +3905,24 @@ static async UpdateMeeting(req: Request, res: Response) {
       }
 
       if (deletedMeetingIds.length > 0) {
-        PushNotificationService.sendMeetingLifecycleToParticipants({
-          action: "cancelled",
-          meetingId: String(meeting._id),
-          meetingTitle: meeting.title,
-          localTime: new Date(meeting.localTime),
-        }).catch((error: any) => {
-          console.error("❌ Failed to send meeting-cancelled participant push notification:", error?.message || error);
-        });
+        // PushNotificationService.sendMeetingLifecycleToParticipants({
+        //   action: "cancelled",
+        //   meetingId: String(meeting._id),
+        //   meetingTitle: meeting.title,
+        //   localTime: new Date(meeting.localTime),
+        // }).catch((error: any) => {
+        //   console.error("❌ Failed to send meeting-cancelled participant push notification:", error?.message || error);
+        // });
 
-        PushNotificationService.sendMeetingLifecycleToRegion({
-          action: "cancelled",
-          meetingId: String(meeting._id),
-          meetingTitle: meeting.title,
-          region: meeting.liveRegion,
-          localTime: new Date(meeting.localTime),
-        }).catch((error: any) => {
-          console.error("❌ Failed to send meeting-cancelled region push notification:", error?.message || error);
-        });
+        // PushNotificationService.sendMeetingLifecycleToRegion({
+        //   action: "cancelled",
+        //   meetingId: String(meeting._id),
+        //   meetingTitle: meeting.title,
+        //   region: meeting.liveRegion,
+        //   localTime: new Date(meeting.localTime),
+        // }).catch((error: any) => {
+        //   console.error("❌ Failed to send meeting-cancelled region push notification:", error?.message || error);
+        // });
 
         await Promise.all([
           MeetingAttendance.deleteMany({ meeting: { $in: deletedMeetingIds } }),
