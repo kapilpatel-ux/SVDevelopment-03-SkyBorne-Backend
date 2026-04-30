@@ -631,7 +631,9 @@ export const getClassReminderEmailHTML = (
                     <a href="${appOpenLink}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%;">
                       Open in App
                     </a>
+                    
                   </td>
+                  <p>${appOpenLink}</p>
                 </tr>
               </table>
             </div>
