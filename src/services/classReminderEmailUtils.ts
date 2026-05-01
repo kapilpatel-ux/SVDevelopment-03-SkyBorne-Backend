@@ -355,12 +355,17 @@ export const getClassReminderEmailHTML = (
   const safeMeetingId = String(meetingId || "").trim();
   // Universal/App Link fallback (use WEBSITE_URL or DASHBOARD_URL env if available)
   const baseWebUrl = (process.env.WEBSITE_URL || process.env.DASHBOARD_URL || "https://sky-borne.vercel.app").replace(/\/$/, "");
-  const universalAppLink = safeMeetingId
-    ? `${baseWebUrl}/class/${encodeURIComponent(safeMeetingId)}`
+  const classWebLink = safeMeetingId
+    ? `${baseWebUrl}/dashboard`
     : webLink;
-  // Custom scheme for deep linking
-  const appLink = safeMeetingId
+  // Use HTTPS bridge link for better compatibility in email clients (Gmail/Outlook often block custom schemes).
+  const openInAppBridgeLink = safeMeetingId
+    ? `${baseWebUrl}/open/class/${encodeURIComponent(safeMeetingId)}`
+    : webLink;
+  // Keep custom-scheme link as explicit fallback text link.
+  const appSchemeLink = safeMeetingId
     ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
+<<<<<<< Updated upstream
     : "";
   
   // Use web-accessible deep link URL that works in browsers with fallback to web dashboard
@@ -369,6 +374,9 @@ export const getClassReminderEmailHTML = (
     const apiBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL || "https://api.skybornedrop.com";
     appOpenLink = `${apiBaseUrl.replace(/\/$/, "")}/open/class/${encodeURIComponent(safeMeetingId)}`;
   }
+=======
+    : "skybornedrop://dashboard";
+>>>>>>> Stashed changes
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -632,6 +640,7 @@ export const getClassReminderEmailHTML = (
 
 
             <div class="cta-section">
+<<<<<<< Updated upstream
               <a href="${webLink}" class="cta-button" target="_blank" rel="noopener noreferrer">
                     View Class
                 </a>
@@ -647,6 +656,19 @@ export const getClassReminderEmailHTML = (
               </table>
             </div>
 
+=======
+                <a href="${openInAppBridgeLink}" class="cta-button">
+                    Open in App
+                </a>
+                <div style="height: 12px; line-height: 12px;">&nbsp;</div>
+                <a href="${classWebLink}" class="cta-button cta-button--secondary">
+                    Open in Browser
+                </a>
+                <div style="margin-top: 12px; font-size: 12px; color: #8b8b8b;">
+                    If app does not open, try direct link:
+                    <a href="${appSchemeLink}" style="color: #c94a7f; text-decoration: underline;">Open Skyborne App</a>
+                </div>
+>>>>>>> Stashed changes
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
               Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
             </p>
