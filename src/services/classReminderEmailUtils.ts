@@ -365,18 +365,7 @@ export const getClassReminderEmailHTML = (
   // Keep custom-scheme link as explicit fallback text link.
   const appSchemeLink = safeMeetingId
     ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
-<<<<<<< Updated upstream
-    : "";
-  
-  // Use web-accessible deep link URL that works in browsers with fallback to web dashboard
-  let appOpenLink = webLink;
-  if (safeMeetingId) {
-    const apiBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL || "https://api.skybornedrop.com";
-    appOpenLink = `${apiBaseUrl.replace(/\/$/, "")}/open/class/${encodeURIComponent(safeMeetingId)}`;
-  }
-=======
     : "skybornedrop://dashboard";
->>>>>>> Stashed changes
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -640,23 +629,6 @@ export const getClassReminderEmailHTML = (
 
 
             <div class="cta-section">
-<<<<<<< Updated upstream
-              <a href="${webLink}" class="cta-button" target="_blank" rel="noopener noreferrer">
-                    View Class
-                </a>
-              <div style="height: 12px; line-height: 12px;">&nbsp;</div>
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto; border-collapse: separate;">
-                <tr>
-                  <td align="center" style="background-color: #ffffff; border: 2px solid #c94a7f; border-radius: 6px;">
-                    <a href="${appOpenLink}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%;">
-                      Open in App
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </div>
-
-=======
                 <a href="${openInAppBridgeLink}" class="cta-button">
                     Open in App
                 </a>
@@ -668,7 +640,6 @@ export const getClassReminderEmailHTML = (
                     If app does not open, try direct link:
                     <a href="${appSchemeLink}" style="color: #c94a7f; text-decoration: underline;">Open Skyborne App</a>
                 </div>
->>>>>>> Stashed changes
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
               Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
             </p>
