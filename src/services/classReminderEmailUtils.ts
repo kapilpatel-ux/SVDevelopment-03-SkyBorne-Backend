@@ -362,6 +362,13 @@ export const getClassReminderEmailHTML = (
   const appLink = safeMeetingId
     ? `skybornedrop://class/${encodeURIComponent(safeMeetingId)}`
     : "";
+  
+  // Use web-accessible deep link URL that works in browsers with fallback to web dashboard
+  let appOpenLink = webLink;
+  if (safeMeetingId) {
+    const apiBaseUrl = process.env.API_BASE_URL || process.env.BACKEND_URL || "https://api.skybornedrop.com";
+    appOpenLink = `${apiBaseUrl.replace(/\/$/, "")}/open/class/${encodeURIComponent(safeMeetingId)}`;
+  }
   const timeUntilClass =
     reminderOffsetMinutes >= 60
       ? `${Math.round(reminderOffsetMinutes / 60)} hours`
@@ -625,15 +632,21 @@ export const getClassReminderEmailHTML = (
 
 
             <div class="cta-section">
-                <a href="${universalAppLink}" class="cta-button">
+              <a href="${webLink}" class="cta-button" target="_blank" rel="noopener noreferrer">
                     View Class
                 </a>
-                ${
-                  appLink
-                    ? `<div style=\"height: 12px; line-height: 12px;\">&nbsp;</div>
-                    <a href=\"${appLink}\" style=\"display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; border: 2px solid #c94a7f; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%; margin-top: 12px;\">Open in App</a>`
-                    : ""
-                }
+              <div style="height: 12px; line-height: 12px;">&nbsp;</div>
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="margin: 0 auto; border-collapse: separate;">
+                <tr>
+                  <td align="center" style="background-color: #ffffff; border: 2px solid #c94a7f; border-radius: 6px;">
+                    <a href="${appOpenLink}" target="_blank" rel="noopener noreferrer" style="display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%;">
+                      Open in App
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </div>
+
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
               Open your dashboard to review the class and join on time. If you need anything, our support team is here to help.
             </p>

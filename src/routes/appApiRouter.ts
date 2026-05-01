@@ -29,7 +29,8 @@ const publicApi = [
   "/products/category/:categoryId",
   "/products/:productId",
   "/meetings/:id/recording",
-  "/mail-management/error-log"
+  "/mail-management/error-log",
+  "/open/class/:meetingId"
 ];
 
 appApiRoutes?.map(({ path, request, method, action,roles }: any) => {

@@ -35,6 +35,12 @@ export const MeetingRoute = [
     method: "post",
   },
   {
+    path: "/open/class/:meetingId",
+    request: null,
+    action: MeetingController.DeepLinkRedirect,
+    method: "get",
+  },
+  {
     path: "/meetings/upcoming",
     request: UpcomingMeetingsSchema,
     action: MeetingController.GetUpcomingMeetings,

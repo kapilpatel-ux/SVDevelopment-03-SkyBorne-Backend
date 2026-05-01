@@ -2141,8 +2141,13 @@ static async GetMeetingRecording(req: Request, res: Response) {
         await attendance.save();
       }
 
-      // Booking confirmed push removed from Join Class flow.
-      // This endpoint should only join the session and return access details.
+      PushNotificationService.sendBookingConfirmed(String(userId), {
+        meetingId: String(meeting._id),
+        meetingTitle: meeting.title,
+        localTime: new Date(meeting.localTime),
+      }).catch((error: any) => {
+        console.error("❌ Failed to send booking-confirmed push notification:", error?.message || error);
+      });
 
       return res.json({
         success: true,
@@ -2663,6 +2668,45 @@ static async GetMeetingRecording(req: Request, res: Response) {
       return res.status(500).json({
         success: false,
         message: error.message || "Error redirecting meeting",
+      });
+    }
+  }
+
+  static async DeepLinkRedirect(req: Request, res: Response) {
+    try {
+      const { meetingId } = req.params;
+
+      if (!meetingId) {
+        return res.status(400).json({
+          success: false,
+          message: "Meeting ID is required",
+        });
+      }
+
+      // Verify the meeting exists
+      const meeting = await Meeting.findById(meetingId).select("_id title");
+
+      if (!meeting) {
+        return res.status(404).json({
+          success: false,
+          message: "Meeting not found",
+        });
+      }
+
+      // Get frontend URL from environment
+      const frontendUrl = process.env.FRONTEND_URL || process.env.WEB_URL || "https://app.skybornedrop.com";
+      
+      // Redirect to the meeting page on the web app
+      // Email clients will follow this redirect properly
+      const redirectUrl = `${frontendUrl.replace(/\/$/, "")}/class/${encodeURIComponent(meetingId)}`;
+      
+      // Use HTTP 301 redirect (permanent) - works reliably in email clients
+      return res.redirect(301, redirectUrl);
+    } catch (error: any) {
+      console.error("Error in deep link redirect:", error.message);
+      return res.status(500).json({
+        success: false,
+        message: "Error processing deep link",
       });
     }
   }
@@ -3900,24 +3944,24 @@ static async UpdateMeeting(req: Request, res: Response) {
       }
 
       if (deletedMeetingIds.length > 0) {
-        // PushNotificationService.sendMeetingLifecycleToParticipants({
-        //   action: "cancelled",
-        //   meetingId: String(meeting._id),
-        //   meetingTitle: meeting.title,
-        //   localTime: new Date(meeting.localTime),
-        // }).catch((error: any) => {
-        //   console.error("❌ Failed to send meeting-cancelled participant push notification:", error?.message || error);
-        // });
+        PushNotificationService.sendMeetingLifecycleToParticipants({
+          action: "cancelled",
+          meetingId: String(meeting._id),
+          meetingTitle: meeting.title,
+          localTime: new Date(meeting.localTime),
+        }).catch((error: any) => {
+          console.error("❌ Failed to send meeting-cancelled participant push notification:", error?.message || error);
+        });
 
-        // PushNotificationService.sendMeetingLifecycleToRegion({
-        //   action: "cancelled",
-        //   meetingId: String(meeting._id),
-        //   meetingTitle: meeting.title,
-        //   region: meeting.liveRegion,
-        //   localTime: new Date(meeting.localTime),
-        // }).catch((error: any) => {
-        //   console.error("❌ Failed to send meeting-cancelled region push notification:", error?.message || error);
-        // });
+        PushNotificationService.sendMeetingLifecycleToRegion({
+          action: "cancelled",
+          meetingId: String(meeting._id),
+          meetingTitle: meeting.title,
+          region: meeting.liveRegion,
+          localTime: new Date(meeting.localTime),
+        }).catch((error: any) => {
+          console.error("❌ Failed to send meeting-cancelled region push notification:", error?.message || error);
+        });
 
         await Promise.all([
           MeetingAttendance.deleteMany({ meeting: { $in: deletedMeetingIds } }),
