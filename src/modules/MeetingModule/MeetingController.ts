@@ -11,6 +11,8 @@ import Service from "../ServiceModule/models/Service";
 import { ServiceType } from "../UserModule/interface/userInterface";
 import CountryRepository from "../CountryModule/country.repository";
 import { ICountry } from "../CountryModule/country.model";
+import countryModel from "../CountryModule/country.model";
+import countryRegionHistoryModel from "../CountryModule/countryRegionHistory.model";
 import TrainerModel from "../TrainerModule/TrainerModel";
 import { channel } from "diagnostics_channel";
 import { PushNotificationService } from "../../services/pushNotification.service";
@@ -944,7 +946,51 @@ static async GetUpcomingMeetings(req: Request, res: Response) {
 
     // ✅ Region filter: only for regular users
     if (!isAdminOrTrainer) {
-      filter.liveRegion = normalizedRegion;
+      // Always use current region based on country mapping (ignores stale frontend region param)
+      const countryCode = String(user.countryCode || "").trim().toUpperCase();
+      let currentRegionName = normalizedRegion;
+
+      if (countryCode) {
+        const country = await (countryModel as any)
+          .findOne({ code: countryCode })
+          .select("_id region createdAt")
+          .populate("region", "name")
+          .lean();
+
+        if (country?._id) {
+          const activeWindow = await (countryRegionHistoryModel as any)
+            .findOne({ country: country._id, toDate: null })
+            .sort({ fromDate: -1 })
+            .populate("region", "name")
+            .lean();
+
+          const regionNameFromHistory =
+            activeWindow?.region && typeof activeWindow.region === "object"
+              ? String(activeWindow.region.name || "").trim()
+              : "";
+
+          const regionNameFromCountry =
+            country?.region && typeof country.region === "object"
+              ? String(country.region.name || "").trim()
+              : "";
+
+          currentRegionName = regionNameFromHistory || regionNameFromCountry || currentRegionName;
+        }
+      }
+
+      if (!currentRegionName) {
+        return res.json({
+          success: true,
+          count: 0,
+          totalCount: 0,
+          hasMore: false,
+          meetings: [],
+          userPlan: user.plan,
+          message: "Region not specified or invalid",
+        });
+      }
+
+      filter.liveRegion = currentRegionName;
     }
 
     console.log("📍 [GetUpcomingMeetings] User role:", userRole, "Is Admin/Trainer:", isAdminOrTrainer);
@@ -1554,6 +1600,75 @@ static async GetMeetingRecording(req: Request, res: Response) {
         const joinStart = user.createdAt || user.subscription?.startDate || null;
         if (joinStart) {
           filter.localTime.$gte = new Date(joinStart);
+        }
+      }
+
+      // ✅ For regular users, only show sessions for the user's region during that time window
+      if (!isAdminOrTrainer) {
+        const countryCode = String(user.countryCode || "").trim().toUpperCase();
+
+        if (countryCode) {
+          const country = await (countryModel as any)
+            .findOne({ code: countryCode })
+            .select("_id region createdAt")
+            .populate("region", "name")
+            .lean();
+
+          if (country?._id) {
+            const history = await (countryRegionHistoryModel as any)
+              .find({ country: country._id })
+              .sort({ fromDate: 1 })
+              .populate("region", "name")
+              .lean();
+
+            const windows =
+              Array.isArray(history) && history.length
+                ? history
+                : [
+                    {
+                      region: country.region || null,
+                      fromDate: country.createdAt || null,
+                      toDate: null,
+                    },
+                  ];
+
+            const regionWindows = windows
+              .map((entry: any) => {
+                const regionName =
+                  entry?.region && typeof entry.region === "object"
+                    ? String(entry.region.name || "").trim()
+                    : "";
+                if (!regionName) return null;
+
+                const fromDate = entry?.fromDate ? new Date(entry.fromDate) : null;
+                const toDate = entry?.toDate ? new Date(entry.toDate) : null;
+                return { regionName, fromDate, toDate };
+              })
+              .filter(Boolean) as Array<{
+              regionName: string;
+              fromDate: Date | null;
+              toDate: Date | null;
+            }>;
+
+            if (regionWindows.length) {
+              const globalStart = filter?.localTime?.$gte
+                ? new Date(filter.localTime.$gte)
+                : null;
+
+              filter.$or = regionWindows.map((w) => {
+                const range: any = {};
+                const start = w.fromDate && globalStart
+                  ? new Date(Math.max(w.fromDate.getTime(), globalStart.getTime()))
+                  : w.fromDate || globalStart;
+                if (start) range.$gte = start;
+                if (w.toDate) range.$lt = w.toDate;
+                return {
+                  liveRegion: w.regionName,
+                  ...(Object.keys(range).length ? { localTime: range } : {}),
+                };
+              });
+            }
+          }
         }
       }
 
