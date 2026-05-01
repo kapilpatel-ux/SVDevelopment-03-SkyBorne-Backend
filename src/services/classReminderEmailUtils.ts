@@ -1,6 +1,3 @@
-// backend/src/services/classReminderEmailUtils.ts
-
-
 // src/services/classReminderEmailUtils.ts
 
 import { getCode } from "country-list";
@@ -303,7 +300,7 @@ export const getClassReminderEmailSubject = (
 
 const DEFAULT_DASHBOARD_URL = (process.env.DASHBOARD_URL || process.env.WEBSITE_URL)
   ? `${String(process.env.DASHBOARD_URL || process.env.WEBSITE_URL).replace(/\/$/, "")}/dashboard`
-  : "https://sky-borne.vercel.app/dashboard";
+  : "https://skybornedrop.com/dashboard";
 export const CLASS_REMINDER_TEMPLATE_VERSION = "v2026-04-30";
 
 const normalizeDashboardPath = (pathname: string): string => {
@@ -337,7 +334,7 @@ const getClassReminderDashboardUrl = (): string => {
     const normalizedBaseUrl = sanitizedDashboardUrl
       .replace(/(?:\/dashboard)+\/?$/i, "")
       .replace(/\/+$/, "");
-    return `${normalizedBaseUrl || "https://sky-borne.vercel.app"}/dashboard`;
+    return `${normalizedBaseUrl || "https://skybornedrop.com"}/dashboard`;
   }
 };
 
@@ -357,7 +354,7 @@ export const getClassReminderEmailHTML = (
   const webLink = getClassReminderDashboardUrl();
   const safeMeetingId = String(meetingId || "").trim();
   // Universal/App Link fallback (use WEBSITE_URL or DASHBOARD_URL env if available)
-  const baseWebUrl = (process.env.WEBSITE_URL || process.env.DASHBOARD_URL || "https://sky-borne.vercel.app").replace(/\/$/, "");
+  const baseWebUrl = (process.env.WEBSITE_URL || process.env.DASHBOARD_URL || "https://skybornedrop.com/").replace(/\/$/, "");
   const classWebLink = safeMeetingId
     ? `${baseWebUrl}/dashboard`
     : webLink;
