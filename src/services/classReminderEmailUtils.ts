@@ -631,7 +631,7 @@ export const getClassReminderEmailHTML = (
                 ${
                   appLink
                     ? `<div style=\"height: 12px; line-height: 12px;\">&nbsp;</div>
-                    <a href=\"${appLink}\" style=\"display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; border: 2px solid #c94a7f; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%; margin-top: 12px;\">Open in App (if installed)</a>`
+                    <a href=\"${appLink}\" style=\"display: inline-block; padding: 14px 40px; background-color: #ffffff; color: #c94a7f; text-decoration: none; border-radius: 6px; font-weight: 600; font-size: 16px; border: 2px solid #c94a7f; cursor: pointer; -webkit-appearance: button; -webkit-text-size-adjust: 100%; margin-top: 12px;\">Open in App</a>`
                     : ""
                 }
             <p class="greeting" style="font-size: 14px; color: #777; text-align: center;">
