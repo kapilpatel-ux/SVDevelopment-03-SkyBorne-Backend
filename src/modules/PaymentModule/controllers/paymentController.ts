@@ -512,10 +512,16 @@ export default class PaymentController {
       });
     } catch (err) {
       console.error("❌ Upgrade plan error:", err);
+      const anyErr = err as any;
+      const message =
+        anyErr?.message ||
+        anyErr?.raw?.message ||
+        anyErr?.error?.message ||
+        "Failed to upgrade plan";
       return res.status(500).json({
         success: false,
-        message: "Failed to upgrade plan",
-        error: err instanceof Error ? err.message : "Unknown error",
+        message,
+        error: message,
       });
     }
   }

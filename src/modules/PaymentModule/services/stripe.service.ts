@@ -688,8 +688,23 @@ export class StripeService {
         ? returnUrl
         : fallbackReturnUrl;
 
+    // Force the "payment method update" flow so the portal doesn't show subscription
+    // management actions (e.g., cancel subscription).
+    const configurationId = String(
+      process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID || "",
+    ).trim();
+
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
+      ...(configurationId ? { configuration: configurationId } : {}),
+      flow_data: {
+        type: "payment_method_update",
+        after_completion: {
+          type: "redirect",
+          redirect: { return_url: safeReturnUrl },
+        },
+      },
+      // Keep return_url for backward-compatibility with older portal behavior.
       return_url: safeReturnUrl,
     } as any);
 
