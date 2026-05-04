@@ -3,6 +3,8 @@ dotenv.config();
 
 import { classReminderEmailQueue } from "../services/queues/classReminderEmailQueue";
 import sgMail from "@sendgrid/mail";
+import mongoose from "mongoose";
+import connectDB from "../config/db";
 import { initConsoleErrorLogger } from "../utils/consoleLogger";
 import {
   CLASS_REMINDER_TEMPLATE_VERSION,
@@ -11,10 +13,16 @@ import {
   getClassReminderEmailSubject,
   resolveMeetingStartDate,
 } from "../services/classReminderEmailUtils";
+import MailLog from "../modules/MailModule/MailModel";
 
 initConsoleErrorLogger();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
+
+const ensureMongoConnection = async () => {
+  if (mongoose.connection.readyState === 1) return;
+  await connectDB();
+};
 
 classReminderEmailQueue.process(async (job) => {
   const {
@@ -116,6 +124,24 @@ classReminderEmailQueue.process(async (job) => {
     `[ClassReminderEmailWorker] Job completed - Success: ${successCount}, Failure: ${failureCount}`
   );
 
+  try {
+    await ensureMongoConnection();
+    const hasValidMeetingTime = !Number.isNaN(meetingStartDate.getTime());
+    await MailLog.create({
+      meetingId: String(meetingId || "").trim() || undefined,
+      meetingTitle: String(meetingTitle || "").trim() || "Untitled Class",
+      meetingTime: hasValidMeetingTime ? meetingStartDate : new Date(),
+      sentAt: new Date(),
+      totalUsers: uniqueUserEmails.length,
+      status: successCount > 0 ? "success" : "failed",
+    });
+  } catch (mailLogError: any) {
+    console.error(
+      `[ClassReminderEmailWorker] Failed to persist MailLog for meeting ${meetingId}:`,
+      mailLogError?.message || mailLogError,
+    );
+  }
+
   return { success: true, emailCount: successCount, failureCount };
 });
 
@@ -126,3 +152,17 @@ classReminderEmailQueue.on("completed", (job) =>
 classReminderEmailQueue.on("failed", (job, err) =>
   console.error(`🔥 Class reminder email job ${job.id} failed: ${err.message}`)
 );
+
+const bootstrapWorker = async () => {
+  try {
+    await ensureMongoConnection();
+    console.log("✅ ClassReminderEmailWorker bootstrap completed");
+  } catch (error: any) {
+    console.error(
+      `❌ ClassReminderEmailWorker bootstrap failed: ${error?.message || error}`,
+    );
+    process.exit(1);
+  }
+};
+
+void bootstrapWorker();
