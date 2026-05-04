@@ -213,33 +213,36 @@ export class StripeService {
       const user = await User.findById(userId);
       if (!user) throw new Error("User not found");
 
-      // ✅ NEW: Get user's country and determine local currency
+      const enableLocalCurrencyConversion =
+        String(process.env.STRIPE_ENABLE_LOCAL_CURRENCY_CONVERSION || "")
+          .trim()
+          .toLowerCase() === "true";
+
       const countryCode = user.countryCode || user.country || "US";
-      const currencyMapping = getCurrencyForCountry(countryCode);
-      const localCurrency = currencyMapping.stripeCurrency; // e.g., 'inr', 'aud', 'eur'
-      const localCurrencyCode = currencyMapping.currency; // e.g., 'INR', 'AUD', 'EUR'
 
-      // console.log(`💰 Processing payment for ${countryCode}:`, {
-      //   originalAmount: amount,
-      //   originalCurrency: currency,
-      //   targetCurrency: localCurrencyCode,
-      //   user: user.email,
-      // });
+      // Default behavior: charge in the currency requested by the client (typically USD).
+      // When local conversion is enabled, convert USD -> local currency based on user country.
+      let localCurrency = String(currency || "USD").toLowerCase();
+      let localCurrencyCode = String(currency || "USD").toUpperCase();
 
-      // ✅ NEW: Convert amount from USD to local currency
-      // ✅ Convert amount from USD → local currency
       let localAmount = amount;
       let conversionRate = 1;
 
-      if (currency !== localCurrencyCode) {
-        const result = await convertUsingDB(
-          amount,
-          currency,
-          localCurrencyCode,
-        );
+      if (enableLocalCurrencyConversion) {
+        const currencyMapping = getCurrencyForCountry(countryCode);
+        localCurrency = currencyMapping.stripeCurrency;
+        localCurrencyCode = currencyMapping.currency;
 
-        localAmount = result.convertedAmount;
-        conversionRate = result.rate;
+        if (String(currency || "").toUpperCase() !== localCurrencyCode) {
+          const result = await convertUsingDB(
+            amount,
+            String(currency || "USD").toUpperCase(),
+            localCurrencyCode,
+          );
+
+          localAmount = result.convertedAmount;
+          conversionRate = result.rate;
+        }
       }
 
       // ✅ NEW: Format amount for Stripe (multiply by 100 for most currencies, except JPY)
@@ -277,7 +280,7 @@ export class StripeService {
         billingType,
         localAmount: localAmount.toString(),
         currency: localCurrencyCode,
-        originalCurrency: currency,
+        originalCurrency: String(currency || "USD").toUpperCase(),
         conversionRate: conversionRate.toString(),
       };
 
@@ -342,7 +345,7 @@ export class StripeService {
         reference: session.id,
         amount: userAmount,              // Original USD amount
         localAmount: localAmount,        // ✅ NEW: Converted local amount
-        currency: "USD",     // ✅ CHANGED: Store local currency
+        currency: localCurrencyCode,
         plan,
         billingType,
         previousSubscriptionId: previousSubscriptionId || undefined,
@@ -357,7 +360,7 @@ export class StripeService {
         metadata: {                      // ✅ NEW: Store conversion metadata
           countryCode,
           conversionRate,
-          originalCurrency: currency,
+          originalCurrency: String(currency || "USD").toUpperCase(),
         },
       });
 
@@ -694,9 +697,17 @@ export class StripeService {
       process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID || "",
     ).trim();
 
+    // To fully hide invoice history / subscriptions, you must use a Billing Portal
+    // configuration with those features disabled.
+    if (!configurationId) {
+      throw new Error(
+        "Missing Stripe billing portal configuration. Set STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID to a Billing Portal configuration with invoice history and subscription cancellation disabled.",
+      );
+    }
+
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      ...(configurationId ? { configuration: configurationId } : {}),
+      configuration: configurationId,
       flow_data: {
         type: "payment_method_update",
         after_completion: {
