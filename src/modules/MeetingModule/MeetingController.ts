@@ -841,9 +841,12 @@ static async CreateMeeting(req: Request, res: Response) {
 static async GetUpcomingMeetings(req: Request, res: Response) {
   console.log("📍 [GetUpcomingMeetings] Fetching upcoming meetings with query:", req.query);
 	  try {
-	    const { search = "", skip = 0, limit = 10, region } = req?.query;
+	    const { search = "", skip = 0, limit = 10, region, countOnly } = req?.query;
 	    const skipNum = parseInt(skip as string) || 0;
 	    const limitNum = parseInt(limit as string) || 10;
+      const isCountOnly =
+        String(countOnly || "").toLowerCase() === "1" ||
+        String(countOnly || "").toLowerCase() === "true";
 	    const normalizedRegion =
 	      typeof region === "string" ? region.trim() : "";
       const hasValidRegionFilter = Boolean(
@@ -999,6 +1002,18 @@ static async GetUpcomingMeetings(req: Request, res: Response) {
     // Get total count
     const totalCount = await Meeting.countDocuments(filter);
 
+    if (isCountOnly) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({
+        success: true,
+        count: 0,
+        totalCount,
+        hasMore: false,
+        meetings: [],
+        userPlan: user.plan,
+      });
+    }
+
     // Fetch paginated meetings
     const meetings = await Meeting.find(filter)
       .sort({ localTime: 1 })
@@ -1030,9 +1045,12 @@ static async GetUpcomingMeetings(req: Request, res: Response) {
 
 static async GetAllMeetings(req: Request, res: Response) {
   try {
-	    const { search = "", skip = 0, limit = 10, region } = req?.query;
+	    const { search = "", skip = 0, limit = 10, region, countOnly } = req?.query;
 	    const skipNum = parseInt(skip as string) || 0;
 	    const limitNum = parseInt(limit as string) || 10;
+      const isCountOnly =
+        String(countOnly || "").toLowerCase() === "1" ||
+        String(countOnly || "").toLowerCase() === "true";
 	    const normalizedRegion =
 	      typeof region === "string" ? region.trim() : "";
       const hasValidRegionFilter = Boolean(
@@ -1161,6 +1179,18 @@ static async GetAllMeetings(req: Request, res: Response) {
 
     // Get total count for the filtered meetings
     const totalCount = await Meeting.countDocuments(filter);
+
+    if (isCountOnly) {
+      res.setHeader("Cache-Control", "no-store");
+      return res.json({
+        success: true,
+        count: 0,
+        totalCount,
+        hasMore: false,
+        meetings: [],
+        userPlan: user.plan,
+      });
+    }
 
     // Fetch paginated meetings
     const meetings = await Meeting.find(filter)
@@ -1539,9 +1569,12 @@ static async GetMeetingRecording(req: Request, res: Response) {
    */
   static async GetPastSessions(req: Request, res: Response) {
     try {
-      const { search = "", skip = 0, limit = 10 } = req?.query;
+      const { search = "", skip = 0, limit = 10, countOnly } = req?.query;
       const skipNum = parseInt(skip as string) || 0;
       const limitNum = parseInt(limit as string) || 10;
+      const isCountOnly =
+        String(countOnly || "").toLowerCase() === "1" ||
+        String(countOnly || "").toLowerCase() === "true";
 
       const userId = req.user?.id;
       const userRole = (req as any).user?.role;
@@ -1747,6 +1780,18 @@ static async GetMeetingRecording(req: Request, res: Response) {
         { $count: "totalCount" },
       ]);
       const totalCount = totalCountAgg[0]?.totalCount || 0;
+
+      if (isCountOnly) {
+        res.setHeader("Cache-Control", "no-store");
+        return res.json({
+          success: true,
+          count: 0,
+          totalCount,
+          hasMore: false,
+          meetings: [],
+          userPlan: user.plan,
+        });
+      }
 
       const enrichedMeetings = await Meeting.aggregate([
         ...pipeline,
