@@ -700,14 +700,24 @@ export class StripeService {
     // To fully hide invoice history / subscriptions, you must use a Billing Portal
     // configuration with those features disabled.
     if (!configurationId) {
-      throw new Error(
-        "Missing Stripe billing portal configuration. Set STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID to a Billing Portal configuration with invoice history and subscription cancellation disabled.",
+      const allowDefaultPortal = /^(1|true|yes)$/i.test(
+        String(process.env.STRIPE_ALLOW_DEFAULT_BILLING_PORTAL_FOR_CARD_UPDATE || ""),
+      );
+
+      if (!allowDefaultPortal) {
+        throw new Error(
+          "Missing Stripe billing portal configuration. Set STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID to a Billing Portal configuration with invoice history and subscription cancellation disabled.",
+        );
+      }
+
+      console.warn(
+        "⚠️  [StripeService.createCardUpdatePortalSession] STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID is not set; creating session without configuration because STRIPE_ALLOW_DEFAULT_BILLING_PORTAL_FOR_CARD_UPDATE is enabled.",
       );
     }
 
     const session = await stripe.billingPortal.sessions.create({
       customer: customerId,
-      configuration: configurationId,
+      ...(configurationId ? { configuration: configurationId } : {}),
       flow_data: {
         type: "payment_method_update",
         after_completion: {
