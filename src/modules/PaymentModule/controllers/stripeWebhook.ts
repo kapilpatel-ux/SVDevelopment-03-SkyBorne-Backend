@@ -517,7 +517,7 @@ router.post(
           const baseCurrency = (basePayment?.currency || "USD").toUpperCase();
           const localCurrency = (
             hydratedInvoice.currency ||
-            basePayment?.currency ||
+            (basePayment as any)?.localCurrency ||
             "USD"
           ).toUpperCase();
 

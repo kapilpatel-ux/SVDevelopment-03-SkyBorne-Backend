@@ -9,6 +9,7 @@ reference?: string;
 amount: number;
 source?:string;
 localAmount: number;
+localCurrency?: string;
 billingType?: string;
 subscriptionActivated?: true;
 plan: string;
@@ -71,6 +72,11 @@ const PaymentSchema = new Schema<IPayment>(
     },
     localAmount: {
       type: Number,
+    },
+    localCurrency: {
+      type: String,
+      uppercase: true,
+      sparse: true,
     },
     plan: {
       type: String,

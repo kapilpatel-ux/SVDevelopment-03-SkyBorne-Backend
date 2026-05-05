@@ -391,9 +391,11 @@ export class StripeService {
         userId,
         orderRef,
         reference: session.id,
-        amount: userAmount,              // Original USD amount
+        // Base amount/currency (what the user selected; typically USD in app)
+        amount: userAmount,
         localAmount: localAmount,        // ✅ NEW: Converted local amount
-        currency: localCurrencyCode,
+        localCurrency: localCurrencyCode,
+        currency: String(currency || "USD").toUpperCase(),
         plan,
         billingType,
         previousSubscriptionId: previousSubscriptionId || undefined,
@@ -1038,8 +1040,9 @@ export class StripeService {
         orderRef,
         reference: paymentIntent.id,
         amount: userAmount,
-        localAmount: localAmount, // ✅ FIXED
-        currency: localCurrencyCode, // ✅ FIXED
+        localAmount: localAmount,
+        localCurrency: localCurrencyCode,
+        currency: String(currency || "USD").toUpperCase(),
         plan,
         billingType,
         status: "PENDING",
