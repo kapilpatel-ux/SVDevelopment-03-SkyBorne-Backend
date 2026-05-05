@@ -1000,6 +1000,94 @@ export default class PaymentController {
 </html>`);
   }
 
+  static async stripeCheckoutReturn(req: Request, res: Response) {
+    const dest = String(req.query?.dest || "web").toLowerCase();
+    const status = String(req.query?.status || "success").toLowerCase();
+    const sessionId =
+      String(req.query?.session_id || req.query?.sessionId || "").trim() || undefined;
+
+    const fallbackWebUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+
+    if (dest !== "app") {
+      return res.redirect(302, fallbackWebUrl);
+    }
+
+    const appScheme = String(process.env.APP_DEEP_LINK_SCHEME || "skybornedrop").trim();
+    const androidPackage = String(process.env.APP_ANDROID_PACKAGE || "com.skyborne").trim();
+
+    const appSuccessTemplate =
+      String(process.env.APP_PAYMENT_SUCCESS_URL || "").trim() ||
+      `${appScheme}://payment-processing?status=success&sessionId={CHECKOUT_SESSION_ID}`;
+    const appCancelTemplate =
+      String(process.env.APP_PAYMENT_CANCEL_URL || "").trim() ||
+      `${appScheme}://payment-processing?status=cancelled`;
+
+    const deepLinkTemplate = status === "cancel" ? appCancelTemplate : appSuccessTemplate;
+    const deepLink = sessionId
+      ? deepLinkTemplate.replace(/\{CHECKOUT_SESSION_ID\}/g, encodeURIComponent(sessionId))
+      : deepLinkTemplate;
+
+    const fallbackUrl = fallbackWebUrl;
+    const deepLinkWithoutScheme = deepLink.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+    const androidIntentLink =
+      `intent://${deepLinkWithoutScheme}` +
+      `#Intent;scheme=${encodeURIComponent(appScheme)}` +
+      `;package=${encodeURIComponent(androidPackage)}` +
+      `;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}` +
+      ";end";
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Returning to Skyborne…</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;padding:24px;background:#fff;color:#111}
+      .box{max-width:520px;margin:0 auto}
+      .muted{color:#555;font-size:14px;line-height:1.4}
+      .btn{display:inline-block;background:#B95E82;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600}
+      .btnSecondary{display:inline-block;margin-top:12px;color:#B95E82;text-decoration:none}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Returning to Skyborne…</h2>
+      <p class="muted">Tap the button below to go back to the app.</p>
+      <p><a id="openBtn" class="btn" href="${deepLink}" rel="nofollow">Open Skyborne App</a></p>
+      <p><a class="btnSecondary" href="${fallbackUrl}">Continue on web</a></p>
+    </div>
+    <script>
+      (function () {
+        var deepLink = ${JSON.stringify(deepLink)};
+        var androidIntentLink = ${JSON.stringify(androidIntentLink)};
+        var ua = String(navigator.userAgent || '').toLowerCase();
+        var isAndroid = ua.indexOf('android') !== -1;
+
+        try {
+          if (isAndroid) {
+            var btn = document.getElementById('openBtn');
+            if (btn) btn.setAttribute('href', androidIntentLink);
+          }
+        } catch (e) {}
+
+        try {
+          setTimeout(function () {
+            if (isAndroid) {
+              window.location.replace(androidIntentLink);
+              return;
+            }
+            window.location.replace(deepLink);
+          }, 150);
+        } catch (e) {}
+      })();
+    </script>
+  </body>
+</html>`);
+  }
+
   /**
    * Enhanced verifyNgeniusPayment for mobile
    */

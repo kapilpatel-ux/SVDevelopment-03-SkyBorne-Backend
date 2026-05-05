@@ -298,8 +298,25 @@ export class StripeService {
         );
       }
 
-      const successUrl = source === "app" ? appSuccessUrl : webSuccessUrl;
-      const cancelUrl = source === "app" ? appCancelUrl : webCancelUrl;
+      const apiBaseUrl = String(process.env.API_BASE_URL || "").trim();
+      const appCheckoutReturnSuccessUrl = apiBaseUrl
+        ? `${apiBaseUrl}/payment/stripe-checkout-return?dest=app&status=success&session_id={CHECKOUT_SESSION_ID}`
+        : undefined;
+      const appCheckoutReturnCancelUrl = apiBaseUrl
+        ? `${apiBaseUrl}/payment/stripe-checkout-return?dest=app&status=cancel&session_id={CHECKOUT_SESSION_ID}`
+        : undefined;
+
+      const isHttpUrl = (value?: string) =>
+        Boolean(value && /^https?:\/\//i.test(String(value).trim()));
+
+      const successUrl =
+        source === "app"
+          ? (isHttpUrl(customSuccessUrl) ? customSuccessUrl : appCheckoutReturnSuccessUrl || appSuccessUrl)
+          : webSuccessUrl;
+      const cancelUrl =
+        source === "app"
+          ? (isHttpUrl(customCancelUrl) ? customCancelUrl : appCheckoutReturnCancelUrl || appCancelUrl)
+          : webCancelUrl;
 
       // Always use a consistent Stripe customer id (reuse if exists, else create once).
       const customerId = await this.getOrCreateCustomer(user);

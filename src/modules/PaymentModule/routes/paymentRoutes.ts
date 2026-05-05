@@ -113,4 +113,10 @@ export const PaymentApiRoutes = [
     request: null,
     method: "get",
   },
+  {
+    path: "/payment/stripe-checkout-return",
+    action: PaymentController.stripeCheckoutReturn,
+    request: null,
+    method: "get",
+  },
 ];
