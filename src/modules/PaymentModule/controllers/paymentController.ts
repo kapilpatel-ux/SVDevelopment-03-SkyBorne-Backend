@@ -926,6 +926,8 @@ export default class PaymentController {
     }
 
     const deepLink = "skybornedrop://billing-portal?status=complete";
+    const androidIntentLink =
+      "intent://billing-portal?status=complete#Intent;scheme=skybornedrop;package=com.skyborne;end";
     const fallbackUrl = fallbackWebUrl;
 
     // NOTE: Many mobile browsers block auto-opening custom schemes without a user gesture.
@@ -950,13 +952,25 @@ export default class PaymentController {
     <div class="box">
       <h2>Returning to Skyborne…</h2>
       <p class="muted">Tap the button below to go back to the app.</p>
-      <p><a class="btn" href="${deepLink}">Open Skyborne App</a></p>
+      <p><a id="openBtn" class="btn" href="${deepLink}">Open Skyborne App</a></p>
       <p><a class="btnSecondary" href="${fallbackUrl}">Continue on web</a></p>
     </div>
     <script>
       (function () {
         var deepLink = ${JSON.stringify(deepLink)};
+        var androidIntentLink = ${JSON.stringify(androidIntentLink)};
         try { window.location.href = deepLink; } catch (e) {}
+
+        // Improve Android reliability: Chrome sometimes ignores custom schemes,
+        // but will honor intent:// links that target the app package.
+        try {
+          var ua = String(navigator.userAgent || '').toLowerCase();
+          var isAndroid = ua.indexOf('android') !== -1;
+          if (isAndroid) {
+            var btn = document.getElementById('openBtn');
+            if (btn) btn.setAttribute('href', androidIntentLink);
+          }
+        } catch (e) {}
       })();
     </script>
   </body>
