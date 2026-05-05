@@ -2301,13 +2301,24 @@ static async GetMeetingRecording(req: Request, res: Response) {
         await attendance.save();
       }
 
-      PushNotificationService.sendBookingConfirmed(String(userId), {
-        meetingId: String(meeting._id),
-        meetingTitle: meeting.title,
-        localTime: new Date(meeting.localTime),
-      }).catch((error: any) => {
-        console.error("❌ Failed to send booking-confirmed push notification:", error?.message || error);
-      });
+      // Booking-confirmed notifications were being triggered on "join" / "watch recording",
+      // which is noisy and not desired. Keep the implementation available, but gate it.
+      const enableBookingConfirmedNotifications =
+        String(process.env.ENABLE_BOOKING_CONFIRMED_NOTIFICATION || "").trim().toLowerCase() ===
+        "true";
+
+      if (enableBookingConfirmedNotifications) {
+        PushNotificationService.sendBookingConfirmed(String(userId), {
+          meetingId: String(meeting._id),
+          meetingTitle: meeting.title,
+          localTime: new Date(meeting.localTime),
+        }).catch((error: any) => {
+          console.error(
+            "❌ Failed to send booking-confirmed push notification:",
+            error?.message || error,
+          );
+        });
+      }
 
       return res.json({
         success: true,
