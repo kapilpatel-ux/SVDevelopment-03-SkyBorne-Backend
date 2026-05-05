@@ -107,4 +107,10 @@ export const PaymentApiRoutes = [
     request: null,
     method: "post",
   },
+  {
+    path: "/payment/stripe-portal-return",
+    action: PaymentController.stripePortalReturn,
+    request: null,
+    method: "get",
+  },
 ];

@@ -30,7 +30,8 @@ const publicApi = [
   "/products/:productId",
   "/meetings/:id/recording",
   "/mail-management/error-log",
-  "/open/class/:meetingId"
+  "/open/class/:meetingId",
+  "/payment/stripe-portal-return"
 ];
 
 appApiRoutes?.map(({ path, request, method, action,roles }: any) => {

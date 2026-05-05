@@ -890,8 +890,20 @@ export default class PaymentController {
         });
       }
 
-      const returnUrl = String(req.body?.returnUrl || "").trim() || undefined;
-      const session = await StripeService.createCardUpdatePortalSession(user, returnUrl);
+      const requestedReturnUrl = String(req.body?.returnUrl || "").trim() || undefined;
+      const clientSourceHeader = String(req.headers["x-client-source"] || "").toLowerCase();
+      const isAppClient = clientSourceHeader === "app";
+
+      const defaultAppReturnUrlBase = String(process.env.API_BASE_URL || "").trim();
+      const defaultWebReturnUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+      const defaultAppReturnUrl = defaultAppReturnUrlBase
+        ? `${defaultAppReturnUrlBase}/payment/stripe-portal-return?dest=app`
+        : undefined;
+
+      const computedReturnUrl =
+        requestedReturnUrl || (isAppClient ? defaultAppReturnUrl : defaultWebReturnUrl);
+
+      const session = await StripeService.createCardUpdatePortalSession(user, computedReturnUrl);
       return res.status(200).json({
         success: true,
         data: session,
@@ -903,6 +915,52 @@ export default class PaymentController {
         message: error?.message || "Failed to create Stripe card update session",
       });
     }
+  }
+
+  static async stripePortalReturn(req: Request, res: Response) {
+    const dest = String(req.query?.dest || "web").toLowerCase();
+    const fallbackWebUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+
+    if (dest !== "app") {
+      return res.redirect(302, fallbackWebUrl);
+    }
+
+    const deepLink = "skybornedrop://billing-portal?status=complete";
+    const fallbackUrl = fallbackWebUrl;
+
+    // Use a small HTML page that attempts to open the app via deep link,
+    // with a timed fallback to the web payments page.
+    res.status(200);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Returning to Skyborne…</title>
+    <meta http-equiv="refresh" content="2;url=${fallbackUrl}" />
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;padding:24px;background:#fff;color:#111}
+      .box{max-width:520px;margin:0 auto}
+      .muted{color:#555;font-size:14px;line-height:1.4}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Returning to Skyborne…</h2>
+      <p class="muted">If the app doesn’t open automatically, you can return to the web page.</p>
+      <p><a href="${fallbackUrl}">Continue on web</a></p>
+    </div>
+    <script>
+      (function () {
+        var deepLink = ${JSON.stringify(deepLink)};
+        var fallbackUrl = ${JSON.stringify(fallbackUrl)};
+        try { window.location.href = deepLink; } catch (e) {}
+        setTimeout(function () { window.location.href = fallbackUrl; }, 1200);
+      })();
+    </script>
+  </body>
+</html>`);
   }
 
   /**
