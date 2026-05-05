@@ -928,8 +928,8 @@ export default class PaymentController {
     const deepLink = "skybornedrop://billing-portal?status=complete";
     const fallbackUrl = fallbackWebUrl;
 
-    // Use a small HTML page that attempts to open the app via deep link,
-    // with a timed fallback to the web payments page.
+    // NOTE: Many mobile browsers block auto-opening custom schemes without a user gesture.
+    // So we attempt once, but keep the user on this page with a clear "Open app" button.
     res.status(200);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     return res.send(`<!doctype html>
@@ -938,25 +938,25 @@ export default class PaymentController {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Returning to Skyborne…</title>
-    <meta http-equiv="refresh" content="2;url=${fallbackUrl}" />
     <style>
       body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;padding:24px;background:#fff;color:#111}
       .box{max-width:520px;margin:0 auto}
       .muted{color:#555;font-size:14px;line-height:1.4}
+      .btn{display:inline-block;background:#B95E82;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600}
+      .btnSecondary{display:inline-block;margin-top:12px;color:#B95E82;text-decoration:none}
     </style>
   </head>
   <body>
     <div class="box">
       <h2>Returning to Skyborne…</h2>
-      <p class="muted">If the app doesn’t open automatically, you can return to the web page.</p>
-      <p><a href="${fallbackUrl}">Continue on web</a></p>
+      <p class="muted">Tap the button below to go back to the app.</p>
+      <p><a class="btn" href="${deepLink}">Open Skyborne App</a></p>
+      <p><a class="btnSecondary" href="${fallbackUrl}">Continue on web</a></p>
     </div>
     <script>
       (function () {
         var deepLink = ${JSON.stringify(deepLink)};
-        var fallbackUrl = ${JSON.stringify(fallbackUrl)};
         try { window.location.href = deepLink; } catch (e) {}
-        setTimeout(function () { window.location.href = fallbackUrl; }, 1200);
       })();
     </script>
   </body>
