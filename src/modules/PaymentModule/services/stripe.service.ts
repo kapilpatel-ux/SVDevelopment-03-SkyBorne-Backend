@@ -219,6 +219,15 @@ export class StripeService {
           .toLowerCase() === "true";
 
       const countryCode = user.countryCode || user.country || "US";
+      const forceUsdCountries = String(
+        process.env.STRIPE_FORCE_USD_COUNTRIES || "AE",
+      )
+        .split(",")
+        .map((c) => c.trim().toUpperCase())
+        .filter(Boolean);
+      const forceUsdForUser = forceUsdCountries.includes(
+        String(countryCode || "").toUpperCase(),
+      );
 
       // Default behavior: charge in the currency requested by the client (typically USD).
       // When local conversion is enabled, convert USD -> local currency based on user country.
@@ -228,7 +237,29 @@ export class StripeService {
       let localAmount = amount;
       let conversionRate = 1;
 
-      if (enableLocalCurrencyConversion) {
+      // Stripe cannot create subscriptions with mixed currencies under the same customer.
+      // If the user already has a Stripe subscription, keep the currency consistent to
+      // avoid "You cannot combine currencies on a single customer".
+      const existingSubscriptionCurrencyCode =
+        await this.getExistingSubscriptionCurrencyCode(user);
+
+      if (existingSubscriptionCurrencyCode) {
+        localCurrencyCode = existingSubscriptionCurrencyCode.toUpperCase();
+        localCurrency = existingSubscriptionCurrencyCode.toLowerCase();
+
+        if (String(currency || "").toUpperCase() !== localCurrencyCode) {
+          const result = await convertUsingDB(
+            amount,
+            String(currency || "USD").toUpperCase(),
+            localCurrencyCode,
+          );
+          localAmount = result.convertedAmount;
+          conversionRate = result.rate;
+        }
+      } else if (forceUsdForUser) {
+        localCurrencyCode = "USD";
+        localCurrency = "usd";
+      } else if (enableLocalCurrencyConversion) {
         const currencyMapping = getCurrencyForCountry(countryCode);
         localCurrency = currencyMapping.stripeCurrency;
         localCurrencyCode = currencyMapping.currency;
@@ -497,6 +528,60 @@ export class StripeService {
           error?.message || error,
         );
       }
+    }
+
+    return null;
+  }
+
+  private static async getExistingSubscriptionCurrencyCode(
+    user: any,
+  ): Promise<string | null> {
+    const stripe = this.getStripeClient();
+
+    // Fast path: stored subscription id
+    if (user?.stripeSubscriptionId) {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+        const priceCurrency =
+          subscription.items?.data?.[0]?.price?.currency ||
+          (subscription.items?.data?.[0] as any)?.plan?.currency;
+        if (priceCurrency) return String(priceCurrency).toUpperCase();
+      } catch (error: any) {
+        const notFound =
+          error?.statusCode === 404 ||
+          error?.code === "resource_missing" ||
+          String(error?.message || "").toLowerCase().includes("no such subscription");
+        if (!notFound) {
+          console.warn(
+            `⚠️ Unable to read Stripe subscription (${user?.stripeSubscriptionId}) for user ${user?._id}:`,
+            error?.message || error,
+          );
+        }
+      }
+    }
+
+    const customerId = await this.getExistingCustomer(user);
+    if (!customerId) return null;
+
+    try {
+      // Grab any subscription currency for this customer (we only need one)
+      const subs = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 1,
+      });
+      const sub = subs.data?.[0];
+      const priceCurrency =
+        sub?.items?.data?.[0]?.price?.currency ||
+        (sub?.items?.data?.[0] as any)?.plan?.currency;
+      if (priceCurrency) return String(priceCurrency).toUpperCase();
+    } catch (error: any) {
+      console.warn(
+        `⚠️ Unable to list Stripe subscriptions for customer ${customerId}:`,
+        error?.message || error,
+      );
     }
 
     return null;
