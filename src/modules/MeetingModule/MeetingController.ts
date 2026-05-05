@@ -4434,7 +4434,6 @@ static async GetAllTrainerMeetings(req: Request, res: Response) {
           $lte: weekEnd,
         },
         service: { $in: serviceIds },
-        status: { $in: ["pending", "completed"] },
       })
         .sort({ localTime: 1 })
         .populate("service", "title name _id")
@@ -4550,7 +4549,6 @@ static async GetAllTrainerMeetings(req: Request, res: Response) {
           $lte: dayEnd,
         },
         service: { $in: serviceIds },
-        status: { $in: ["pending", "completed"] },
       })
         .sort({ localTime: 1 })
         .populate("service", "title name _id")
