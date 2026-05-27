@@ -1,58 +1,21 @@
 import { Request, Response, NextFunction } from "express";
 import UserService from "../services/userService";
 import User from "../models/User";
+import AccountDeletionRequest from "../models/AccountDeletionRequest";
 import MeetingAttendance from "../../MeetingModule/MeetingModels/MeetingAttendance";
+import Service from "../../ServiceModule/models/Service";
 import Meeting from "../../MeetingModule/MeetingModels/Meeting";
 import extractPhoneDetails from "../../../utils/extractPhoneDetail";
-import { getCode, getName } from "country-list";
-import CancelSubscriptionModel from "../../CancelSubscriptionModule/CancelSubscriptionModel";
-import { PushNotificationService } from "../../../services/pushNotification.service";
+import Payment from "../../PaymentModule/models/Payment";
+import MeetingParticipant from "../../MeetingModule/MeetingModels/MeetingParticipant";
+import { Feedback } from "../../FeedbackModule/FeedbackModel";
+import UserSubscription from "../../PaymentModule/models/Subscription";
+import { StripeService } from "../../PaymentModule/services/stripe.service";
+import { NgeniusService } from "../../../services/ngenius.service";
 
 const userService = new UserService();
 
 export class UserController {
-  private static async attachCancelledAtFromCancellationRequests(users: any[]) {
-    if (!users.length) return users;
-
-    const emails = Array.from(
-      new Set(
-        users
-          .map((user: any) => String(user?.email || "").trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    );
-
-    if (!emails.length) return users;
-
-    const cancelledRequests = await CancelSubscriptionModel.find({
-      email: { $in: emails },
-      status: "cancelled",
-      cancelledAt: { $ne: null },
-    })
-      .select("email cancelledAt createdAt")
-      .sort({ cancelledAt: -1, createdAt: -1 })
-      .lean();
-
-    const cancelledAtByEmail = new Map<string, Date>();
-
-    for (const request of cancelledRequests) {
-      const emailKey = String((request as any)?.email || "")
-        .trim()
-        .toLowerCase();
-      const cancelledAt = (request as any)?.cancelledAt;
-      if (!emailKey || cancelledAtByEmail.has(emailKey) || !cancelledAt)
-        continue;
-
-      cancelledAtByEmail.set(emailKey, cancelledAt);
-    }
-
-    return users.map((user: any) => {
-      const emailKey = String(user?.email || "").trim().toLowerCase();
-      const cancelledAt = cancelledAtByEmail.get(emailKey) || null;
-      return { ...user, cancelledAt };
-    });
-  }
-
   // Original pagination endpoint
   static async getAll(req: Request, res: Response) {
     try {
@@ -60,7 +23,6 @@ export class UserController {
       const limit = parseInt(req.query.limit as string) || 10;
       const search = (req.query.search as string) || "";
       const country = (req.query.country as string) || "";
-      const state = (req.query.state as string) || "";
       const plan = (req.query.plan as string) || "";
       const filter = (req.query.filter as string) || "";
 
@@ -73,12 +35,6 @@ export class UserController {
       // Filter by country code
       if (country && country !== "all") {
         query.countryCode = country.toUpperCase();
-      }
-
-      // Filter by state
-      if (state && state.toLowerCase() !== "all") {
-        const escapedState = state.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        query.state = { $regex: `^${escapedState}$`, $options: "i" };
       }
 
       // Filter by plan
@@ -105,15 +61,12 @@ export class UserController {
       // Fetch users with applied filters
       const users = await User.find(finalQuery)
         .select(
-          "_id firstName lastName email phoneNumber country countryCode state plan subscription isActive createdAt",
+          "_id firstName lastName email phoneNumber country countryCode plan isActive createdAt",
         )
         .skip(skip)
         .limit(limit)
         .sort({ createdAt: -1 })
         .lean();
-
-      const usersWithCancelledAt =
-        await UserController.attachCancelledAtFromCancellationRequests(users);
 
       // Get total count for pagination
       const total = await User.countDocuments(finalQuery);
@@ -122,7 +75,7 @@ export class UserController {
         success: true,
         message: "Users fetched successfully",
         data: {
-          users: usersWithCancelledAt,
+          users,
           pagination: {
             currentPage: page,
             totalPages: Math.ceil(total / limit),
@@ -186,13 +139,10 @@ export class UserController {
       // Fetch ALL users with applied filters
       const users = await User.find(finalQuery)
         .select(
-          "_id firstName lastName email phoneNumber country countryCode state city plan subscription isActive createdAt",
+          "_id firstName lastName email phoneNumber country countryCode plan isActive createdAt",
         )
         .sort({ createdAt: -1 })
         .lean();
-
-      const usersWithCancelledAt =
-        await UserController.attachCancelledAtFromCancellationRequests(users);
 
       // Generate CSV
       const headers = [
@@ -200,54 +150,29 @@ export class UserController {
         "Email",
         "Phone",
         "Country",
-        "State",
-        "City",
         "Plan",
-        "Subscription Status",
-        "Cancelled At",
         "Status",
         "Created Date",
       ];
 
-      const formatDate = (dateValue: any) => {
-        if (!dateValue) return "N/A";
-        const parsedDate = new Date(dateValue);
-        if (Number.isNaN(parsedDate.getTime())) return "N/A";
-
-        return parsedDate.toLocaleDateString("en-US", {
-          year: "numeric",
-          month: "short",
-          day: "numeric",
-        });
-      };
-
-      const rows = usersWithCancelledAt.map((user: any) => {
+      const rows = users.map((user: any) => {
         const name =
           `${user.firstName || ""} ${user.lastName || ""}`.trim() || "N/A";
         const email = user?.email || "N/A";
         const phone = user?.phoneNumber || "N/A";
         const country = user?.country || user?.countryCode || "N/A";
-        const state = user?.state || "N/A";
-        const city = user?.city || "N/A";
         const plan = user.plan || "N/A";
-        const subscriptionStatus = user?.subscription?.status || "N/A";
-        const cancelledAt = formatDate(user?.cancelledAt);
         const status = user.isActive ? "Active" : "Inactive";
-        const createdDate = formatDate(user.createdAt);
+        const createdDate = new Date(user.createdAt).toLocaleDateString(
+          "en-US",
+          {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+          },
+        );
 
-        return [
-          name,
-          email,
-          phone,
-          country,
-          state,
-          city,
-          plan,
-          subscriptionStatus,
-          cancelledAt,
-          status,
-          createdDate,
-        ];
+        return [name, email, phone, country, plan, status, createdDate];
       });
 
       // Escape CSV values
@@ -287,6 +212,7 @@ export class UserController {
   static async GetDashboardStats(req: Request, res: Response) {
     try {
       const userId = req.user?.id;
+      const {region} = req?.query;
 
       if (!userId) {
         return res.status(401).json({
@@ -306,10 +232,33 @@ export class UserController {
       }
 
       const now = new Date();
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+
+      // Determine which service titles to filter based on plan
+      let serviceTitles: string[] = [];
+
+      if (user.plan === "gold-yoga") {
+        serviceTitles = ["Yoga"];
+      } else if (user.plan === "gold-zumba") {
+        serviceTitles = ["Zumba Dance"];
+      } else if (user.plan === "gold-mixed") {
+        serviceTitles = ["Yoga", "Zumba Dance"];
+      } else if (user.plan === "diamond" || user.plan === "platinum") {
+        serviceTitles = ["Yoga", "Zumba Dance", "Diet & Nutrition"];
+      }
+
+      // Fetch service IDs based on titles
+      const services = await Service.find({
+        title: { $in: serviceTitles },
+      }).select("_id");
+
+      const serviceIds = services.map((service) => service._id);
 
       // 1. Count Upcoming Sessions
       const upcomingSessions = await Meeting.countDocuments({
-        localTime: { $gte: now },
+        localTime: { $gte: oneHourAgo },
+        service: { $in: serviceIds },
+        ...(region ? { liveRegion: region } : {}),
       });
 
       // 2. Get Total Credits
@@ -382,6 +331,71 @@ export class UserController {
     }
   }
 
+  static async changePassword(req: Request, res: Response) {
+    try {
+      const userId = req.user?.id;
+      const { currentPassword, newPassword, confirmPassword } = req.body ?? {};
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated",
+        });
+      }
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "Current password and new password are required",
+        });
+      }
+
+      if (typeof newPassword !== "string" || newPassword.length < 8) {
+        return res.status(400).json({
+          success: false,
+          message: "New password must be at least 8 characters",
+        });
+      }
+
+      if (confirmPassword !== undefined && newPassword !== confirmPassword) {
+        return res.status(400).json({
+          success: false,
+          message: "New password and confirm password do not match",
+        });
+      }
+
+      const user = await User.findById(userId).select("+password");
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const isMatch = await (user as any).comparePassword(currentPassword);
+      if (!isMatch) {
+        return res.status(400).json({
+          success: false,
+          message: "Current password is incorrect",
+        });
+      }
+
+      (user as any).password = newPassword;
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        message: "Password changed successfully",
+      });
+    } catch (error: any) {
+      console.error("❌ Error changing password:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to change password",
+      });
+    }
+  }
+
   static async updateProfile(req: Request, res: Response, next: NextFunction) {
     try {
       const userId = (req as any).user?.id;
@@ -400,9 +414,6 @@ export class UserController {
         "lastName",
         "phone",
         "country",
-        "email", 
-        "state",
-        "city",
         "status",
       ];
 
@@ -420,24 +431,6 @@ export class UserController {
             updateData.localNumber = localNumber;     
             updateData.countryCode = countryCode;     
             updateData.country = country;             
-          } else if (field === "country") {
-            const rawCountry = String(payload.country || "").trim();
-            if (rawCountry) {
-              const isIsoCode = /^[a-z]{2}$/i.test(rawCountry);
-              const normalizedCode = isIsoCode
-                ? rawCountry.toUpperCase()
-                : getCode(rawCountry) || "";
-              const normalizedName = isIsoCode
-                ? getName(rawCountry.toUpperCase()) || rawCountry
-                : rawCountry;
-
-              updateData.country = normalizedName;
-              if (normalizedCode) {
-                updateData.countryCode = normalizedCode;
-              }
-            } else {
-              updateData.country = rawCountry;
-            }
           } else {
             updateData[field] = payload[field];
           }
@@ -483,58 +476,6 @@ export class UserController {
       });
     } catch (error: any) {
       console.error("Error updating profile:", error);
-      next(error);
-    }
-  }
-
-  static async changePassword(req: Request, res: Response, next: NextFunction) {
-    try {
-      const userId = req.user?.id || (req.user as any)?._id;
-      const { newPassword } = req.body;
-
-      if (!userId) {
-        return res.status(401).json({
-          success: false,
-          message: "Unauthorized",
-        });
-      }
-
-      if (!newPassword || typeof newPassword !== "string") {
-        return res.status(400).json({
-          success: false,
-          message: "New password is required",
-        });
-      }
-
-      if (newPassword.length < 8) {
-        return res.status(400).json({
-          success: false,
-          message: "Password must be at least 8 characters",
-        });
-      }
-
-      const user = await User.findById(userId).select("+password");
-
-      if (!user) {
-        return res.status(404).json({
-          success: false,
-          message: "User not found",
-        });
-      }
-
-      user.password = newPassword;
-      await user.save();
-
-      PushNotificationService.sendPasswordChanged(String(user._id)).catch((error: any) => {
-        console.error("❌ Failed to send password-changed push notification:", error?.message || error);
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: "Password changed successfully",
-      });
-    } catch (error: any) {
-      console.error("Error changing password:", error);
       next(error);
     }
   }
@@ -587,6 +528,95 @@ export class UserController {
         success: false,
         message: error.message || "Failed to update user status",
       });
+    }
+  }
+
+  static async deleteAccount(req: Request, res: Response) {
+    try {
+      const userId = req?.user?.id;
+      const deletionReason =
+        typeof req.body?.reason === "string" && req.body.reason.trim().length > 0
+          ? req.body.reason.trim()
+          : "User requested account deletion";
+
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "User not authenticated" });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const fullName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || "User";
+
+      await AccountDeletionRequest.create({
+        userId: user._id,
+        email: user.email,
+        fullName,
+        reason: deletionReason,
+        status: "requested",
+        requestedAt: new Date(),
+        metadata: {
+          gateway: user.gateway,
+          plan: user.plan || null,
+        },
+      });
+
+      // 1) Cancel any active subscriptions with payment gateways
+      try {
+        if (user.gateway === "stripe" && user.stripeSubscriptionId) {
+          await StripeService.cancelSubscription(user.stripeSubscriptionId);
+        }
+
+        if (user.gateway === "ngenius") {
+          await NgeniusService.cancelRecurringSubscription(userId);
+        }
+      } catch (err) {
+        console.error("Error cancelling external subscription:", err);
+        // proceed even if external cancellation fails
+      }
+
+      // 2) Remove or anonymize related records
+      try {
+        await Payment.deleteMany({ userId: userId });
+        await UserSubscription.deleteMany({ userId: userId });
+        await MeetingParticipant.deleteMany({ userId: userId });
+        await MeetingAttendance.deleteMany({ user: userId });
+        await Feedback.deleteMany({ userId: userId });
+      } catch (err) {
+        console.error("Error deleting related records:", err);
+      }
+
+      // 3) Anonymize user record to remove personal identifiers
+      try {
+        user.email = `deleted+${user._id}@remove.local`;
+        user.firstName = "Deleted";
+        user.lastName = "User";
+        user.phoneNumber = undefined as any;
+        user.dialingCode = undefined as any;
+        user.localNumber = undefined as any;
+        user.ngeniusCustomerId = undefined as any;
+        user.stripeCustomerId = undefined as any;
+        user.stripeSubscriptionId = undefined as any;
+        user.subscription = { ...user.subscription, status: "cancelled", cancelledAt: new Date() } as any;
+        user.isActive = false;
+        user.onboardingCompleted = false;
+        await user.save();
+
+        await AccountDeletionRequest.updateMany(
+          { userId: user._id, status: "requested" },
+          { $set: { status: "processed", processedAt: new Date() } },
+        );
+      } catch (err) {
+        console.error("Error anonymizing user:", err);
+        return res.status(500).json({ success: false, message: "Failed to anonymize user data" });
+      }
+
+      return res.status(200).json({ success: true, message: "Account deleted and data anonymized" });
+    } catch (error: any) {
+      console.error("Error deleting account:", error);
+      return res.status(500).json({ success: false, message: error.message || "Failed to delete account" });
     }
   }
 }

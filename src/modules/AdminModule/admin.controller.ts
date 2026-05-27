@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import User from "../UserModule/models/User";
+import AccountDeletionRequest from "../UserModule/models/AccountDeletionRequest";
 import Payment from "../PaymentModule/models/Payment";
 import Meeting from "../MeetingModule/MeetingModels/Meeting";
 import TrainerModel from "../TrainerModule/TrainerModel";
@@ -110,19 +111,15 @@ export class AdminController {
    */
 getOverviewStats = async (req: Request, res: Response): Promise<void> => {
     try {
-      const activeUserMatch = {
-        role: "user",
-        isActive: true,
-        onboardingCompleted: true,
-        "subscription.status": "active",
-      };
-
       // ===== ACTIVE USERS =====
-      const activeUsers = await User.countDocuments(activeUserMatch);
+      const activeUsers = await User.countDocuments({
+        onboardingCompleted: true,
+        role: "user"
+      });
 
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       const previousMonthUsers = await User.countDocuments({
-        ...activeUserMatch,
+        onboardingCompleted: true,
         createdAt: { $lt: thirtyDaysAgo },
       });
 
@@ -198,9 +195,7 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
         : 0;
 
       // ===== ACTIVE TRAINERS =====
-      const activeTrainers = await TrainerModel.countDocuments({
-        status: "active",
-      });
+      const activeTrainers = await TrainerModel.countDocuments();
 
       // ===== PENDING APPROVALS =====
       const pendingApprovals = await Payment.countDocuments({
@@ -267,6 +262,66 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
       });
     } catch (error) {
       console.error("Error in getOverviewStats:", error);
+      res.status(500).json({
+        success: false,
+        message: error instanceof Error ? error.message : "Server error",
+      });
+    }
+  };
+
+  /**
+   * Trigger purge of anonymized users older than specified days (admin only)
+   */
+  purgeDeletedUsers = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const days = parseInt((req.query.days as string) || "30", 10);
+      const { purgeAnonymizedUsers } = await import("../../services/userPurgeService");
+      const result = await purgeAnonymizedUsers(days);
+      res.status(200).json({ success: true, data: result });
+    } catch (error) {
+      console.error("Error in purgeDeletedUsers:", error);
+      res.status(500).json({ success: false, message: error instanceof Error ? error.message : "Server error" });
+    }
+  };
+
+  /**
+   * List recent account deletion requests for admins
+   */
+  getAccountDeletionRequests = async (req: Request, res: Response): Promise<void> => {
+    try {
+      const page = parseInt((req.query.page as string) || "1", 10);
+      const limit = parseInt((req.query.limit as string) || "10", 10);
+      const status = (req.query.status as string) || "all";
+      const skip = (page - 1) * limit;
+
+      const query: Record<string, any> = {};
+      if (status !== "all") {
+        query.status = status;
+      }
+
+      const [items, total] = await Promise.all([
+        AccountDeletionRequest.find(query)
+          .sort({ requestedAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        AccountDeletionRequest.countDocuments(query),
+      ]);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          items,
+          pagination: {
+            currentPage: page,
+            totalPages: Math.ceil(total / limit),
+            total,
+            limit,
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Error in getAccountDeletionRequests:", error);
       res.status(500).json({
         success: false,
         message: error instanceof Error ? error.message : "Server error",
@@ -409,7 +464,7 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
       // Fetch all activities in parallel
-      const [newUsers, payments, newTrainers, newSessions] = await Promise.all([
+      const [newUsers, payments, newTrainers, newSessions, deletionRequests] = await Promise.all([
         User.find(
           { createdAt: { $gte: sevenDaysAgo } },
           { firstName: 1, lastName: 1, createdAt: 1 }
@@ -441,6 +496,14 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
         )
           .sort({ startDate: -1 })
           .limit(3)
+          .lean(),
+
+        AccountDeletionRequest.find(
+          { requestedAt: { $gte: sevenDaysAgo } },
+          { fullName: 1, requestedAt: 1, status: 1 }
+        )
+          .sort({ requestedAt: -1 })
+          .limit(5)
           .lean(),
       ]);
 
@@ -482,6 +545,15 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
           text: `New session scheduled - ${session.title}`,
           time: getTimeAgo(session.startDate),
           type: "success",
+        });
+      });
+
+      // Add account deletion requests
+      deletionRequests.forEach((request: any) => {
+        activities.push({
+          text: `Account deletion request - ${request.fullName}`,
+          time: getTimeAgo(request.requestedAt),
+          type: "warning",
         });
       });
 
@@ -627,13 +699,6 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
 
 getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
   try {
-    const activeUserMatch = {
-      role: "user",
-      isActive: true,
-      onboardingCompleted: true,
-      "subscription.status": "active",
-    };
-
     // Aggregate payments by country
     const revenueByCountry = await Payment.aggregate([
       {
@@ -672,33 +737,9 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
       },
     ]);
 
-    // Aggregate active users by country
-    const activeUsersByCountry = await User.aggregate([
-      {
-        $match: {
-          ...activeUserMatch,
-        },
-      },
-      {
-        $group: {
-          _id: "$country",
-          activeUsers: { $sum: 1 },
-        },
-      },
-    ]);
-
-    const activeUsersMap = new Map<string, number>();
-    activeUsersByCountry.forEach((item) => {
-      activeUsersMap.set(item._id || "N/A", item.activeUsers || 0);
-    });
-
     // Calculate grand total
     const grandTotal = revenueByCountry.reduce(
       (sum, item) => sum + item.totalAmount,
-      0
-    );
-    const totalActiveUsers = activeUsersByCountry.reduce(
-      (sum, item) => sum + (item.activeUsers || 0),
       0
     );
 
@@ -707,7 +748,6 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
       country: item._id || "N/A",
       count: item.count,
       amount: item.totalAmount,
-      activeUsers: activeUsersMap.get(item._id || "N/A") || 0,
     }));
 
     // Add grand total row
@@ -717,7 +757,6 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
         country: "Grand Total",
         count: formattedData.reduce((sum, row) => sum + row.count, 0),
         amount: grandTotal,
-        activeUsers: totalActiveUsers,
       },
     };
 

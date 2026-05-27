@@ -11,23 +11,19 @@ import { connectRedis } from "./config/redis"; // Your Redis connection file
 import app from "./app"; // Imported Express app
 import { initializeSocket, setIOInstance } from "./config/socket";
 import { startCurrencyCron } from "./modules/CurrencyModule/CurrencyCron";
-import { initializeEmailServices } from "./services/initializeEmailService"; 
-import { startRecurringFailureSubscriptionInactiveCron } from "./cron/RecurringFailureSubscriptionInactiveCron";
-import { initConsoleErrorLogger } from "./utils/consoleLogger";
+import { startUserPurgeCron } from "./services/userPurgeService";
 
 const PORT = process.env.PORT || 8000;
 
 const startServer = async () => {
   try {
-    console.log("🚀 Starting latest server...");
-    initConsoleErrorLogger();
+    console.log("🚀 Starting server...");
 
     /** 1. Connect MongoDB */
     await connectDB();
 
     /** 2. Connect Redis */
     await connectRedis();
-    initializeEmailServices();
 
     /** 3. Create HTTP server */
     const server = http.createServer(app);
@@ -44,7 +40,8 @@ const startServer = async () => {
       () => {
         console.log(`🌐 Server running on port ${PORT}`);
         startCurrencyCron();
-        startRecurringFailureSubscriptionInactiveCron();
+        // Start user purge cron (default retention: 30 days)
+        startUserPurgeCron(Number(process.env.USER_PURGE_DAYS) || 30);
       },
     );
 

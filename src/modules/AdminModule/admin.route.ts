@@ -57,4 +57,18 @@ export const AdminRoutes = [
     action: _adminController.getRevenueByCountry,
     method: "get",
   },
+  {
+    path: "/purge-deleted-users",
+    request: null,
+    action: _adminController.purgeDeletedUsers,
+    method: "post",
+    roles: ["admin"],
+  },
+  {
+    path: "/account-deletion-requests",
+    request: null,
+    action: _adminController.getAccountDeletionRequests,
+    method: "get",
+    roles: ["admin"],
+  },
 ];
