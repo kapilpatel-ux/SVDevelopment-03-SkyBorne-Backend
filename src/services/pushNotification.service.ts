@@ -1,4 +1,3 @@
-import admin from "firebase-admin";
 import fs from "fs";
 import path from "path";
 import DeviceToken from "../modules/NotificationModule/models/DeviceToken";
@@ -8,6 +7,23 @@ import MeetingParticipant from "../modules/MeetingModule/MeetingModels/MeetingPa
 import regionModel from "../modules/RegionModule/region.model";
 import countryModel from "../modules/CountryModule/country.model";
 import User from "../modules/UserModule/models/User";
+
+let firebaseAdmin: any = null;
+
+const loadFirebaseAdmin = () => {
+  if (firebaseAdmin) {
+    return firebaseAdmin;
+  }
+
+  try {
+    // firebase-admin is optional in local/dev installs; skip push delivery if unavailable.
+    firebaseAdmin = require("firebase-admin");
+    return firebaseAdmin;
+  } catch (error) {
+    console.warn("⚠️ [PushNotificationService] firebase-admin module not available; FCM disabled");
+    return null;
+  }
+};
 
 type PushPayload = {
   title: string;
@@ -23,6 +39,13 @@ export class PushNotificationService {
   private static initializeFirebase() {
     if (this.firebaseReady) return;
     this.firebaseReady = true;
+
+    const admin = loadFirebaseAdmin();
+
+    if (!admin) {
+      this.firebaseEnabled = false;
+      return;
+    }
 
     try {
       if (admin.apps.length) {
@@ -73,13 +96,23 @@ export class PushNotificationService {
         return;
       }
 
-      const defaultServiceAccountPath = path.resolve(process.cwd(), "firebase-service-account.json");
-      if (fs.existsSync(defaultServiceAccountPath)) {
-        const raw = fs.readFileSync(defaultServiceAccountPath, "utf8");
+      const candidatePaths = [
+        process.env.FCM_SERVICE_ACCOUNT_PATH,
+        path.resolve(process.cwd(), "firebase-service-account.json"),
+        path.resolve(__dirname, "../../firebase-service-account.json"),
+        path.resolve(__dirname, "../../../firebase-service-account.json"),
+      ].filter((item): item is string => Boolean(item));
+
+      for (const candidatePath of candidatePaths) {
+        if (!fs.existsSync(candidatePath)) {
+          continue;
+        }
+
+        const raw = fs.readFileSync(candidatePath, "utf8");
         const credentials = JSON.parse(raw);
         console.log("🔐 [PushNotificationService] firebase:init", {
-          source: "firebase-service-account.json",
-          path: defaultServiceAccountPath,
+          source: path.basename(candidatePath),
+          path: candidatePath,
           projectId: credentials?.project_id,
           keyId: credentials?.private_key_id,
           clientEmail: credentials?.client_email,
@@ -113,6 +146,7 @@ export class PushNotificationService {
 
   private static async sendMulticast(tokens: string[], payload: PushPayload) {
     this.initializeFirebase();
+    const admin = loadFirebaseAdmin();
 
     console.log("🔔 [PushNotificationService] dispatch:start", {
       title: payload.title,
@@ -133,6 +167,19 @@ export class PushNotificationService {
       };
     }
 
+    if (!admin) {
+      console.warn("⚠️ [PushNotificationService] dispatch:skipped - firebase-admin unavailable", {
+        title: payload.title,
+        tokenCount: tokens.length,
+      });
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [] as string[],
+        reason: "firebase_admin_unavailable",
+      };
+    }
+
     if (tokens.length === 0) {
       console.warn("⚠️ [PushNotificationService] dispatch:skipped - no device tokens", {
         title: payload.title,
@@ -145,7 +192,7 @@ export class PushNotificationService {
       };
     }
 
-    const message: admin.messaging.MulticastMessage = {
+    const message: any = {
       tokens,
       notification: {
         title: payload.title,
@@ -169,12 +216,41 @@ export class PushNotificationService {
       },
     };
 
-    const response = await admin.messaging().sendEachForMulticast(message);
+    let response: any;
+
+    try {
+      response = await admin.messaging().sendEachForMulticast(message);
+    } catch (error: any) {
+      const code = error?.code || "unknown";
+      const errorMessage = error?.message || "Failed to send multicast push";
+
+      console.error("❌ [PushNotificationService] dispatch:error", {
+        title: payload.title,
+        tokenCount: tokens.length,
+        code,
+        message: errorMessage,
+      });
+
+      return {
+        successCount: 0,
+        failureCount: tokens.length,
+        invalidTokens: [] as string[],
+        errorCodeSummary: { [code]: tokens.length },
+        failureSamples: [
+          {
+            tokenPrefix: String(tokens[0] || "").slice(0, 24),
+            code,
+            message: errorMessage,
+          },
+        ],
+        reason: "fcm_send_failed",
+      };
+    }
     const invalidTokens: string[] = [];
     const errorCodeSummary: Record<string, number> = {};
     const failureSamples: Array<{ tokenPrefix: string; code: string; message: string }> = [];
 
-    response.responses.forEach((item, index) => {
+    response.responses.forEach((item: any, index: number) => {
       if (!item.success) {
         const code = item.error?.code || "";
         const message = item.error?.message || "";
@@ -294,6 +370,83 @@ export class PushNotificationService {
     });
 
     console.log("✅ [PushNotificationService] sendToUser:logged", {
+      userId,
+      title: payload.title,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      reason: (result as any).reason || "sent",
+    });
+
+    return result;
+  }
+
+  static async sendToUserPrimaryDevice(
+    userId: string,
+    payload: PushPayload,
+    options?: {
+      category?: "transactional" | "reminder" | "lifecycle" | "broadcast" | "security";
+      eventType?: string;
+      dedupeKey?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    if (options?.dedupeKey) {
+      const existing = await PushNotificationLog.findOne({ dedupeKey: options.dedupeKey })
+        .select("_id")
+        .lean();
+
+      if (existing) {
+        return { skipped: true, reason: "duplicate", successCount: 0, failureCount: 0 };
+      }
+    }
+
+    const recipient = await User.findById(userId).select("email firstName lastName").lean();
+    const tokenDocs = await DeviceToken.find({ userId, isActive: true })
+      .sort({ lastSeenAt: -1, updatedAt: -1, createdAt: -1 })
+      .select("token platform lastSeenAt updatedAt createdAt");
+
+    const primaryTokenDoc = tokenDocs[0];
+    const tokens = primaryTokenDoc?.token ? [primaryTokenDoc.token] : [];
+    const platformSummary = primaryTokenDoc?.platform
+      ? { [String(primaryTokenDoc.platform)]: 1 }
+      : {};
+
+    console.log("🔔 [PushNotificationService] sendToUserPrimaryDevice", {
+      userId,
+      email: (recipient as any)?.email || null,
+      name: [recipient?.firstName, recipient?.lastName].filter(Boolean).join(" ") || null,
+      title: payload.title,
+      tokenCount: tokens.length,
+      platformSummary,
+      tokenPrefixes: tokens.slice(0, 5).map((token) => String(token).slice(0, 24)),
+      category: options?.category || "transactional",
+      eventType: options?.eventType || "push.single",
+    });
+
+    const result = await this.sendMulticast(tokens, payload);
+
+    if (result.invalidTokens.length > 0) {
+      await DeviceToken.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { isActive: false, lastSeenAt: new Date() } },
+      );
+    }
+
+    await PushNotificationLog.create({
+      userId,
+      eventType: options?.eventType || "push.single",
+      category: options?.category || "transactional",
+      title: payload.title,
+      body: payload.body,
+      tokenCount: tokens.length,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      dedupeKey: options?.dedupeKey,
+      metadata: options?.metadata || null,
+      sentAt: new Date(),
+    });
+
+    console.log("✅ [PushNotificationService] sendToUserPrimaryDevice:logged", {
       userId,
       title: payload.title,
       successCount: result.successCount,
@@ -719,8 +872,8 @@ export class PushNotificationService {
     return this.sendToUser(
       userId,
       {
-        title: "⚠️ Don’t Miss Out!",
-        body: `Hey there, your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}). Renew now to keep enjoying all the benefits 💎`,
+        title: "Don’t Miss Out",
+        body: `Please ensure sufficient balance in your bank account for seamless AutoPay subscription renewal. Your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}).`,
         highPriority: false,
         data: {
           type: "subscription.expiry",

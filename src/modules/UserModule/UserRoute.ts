@@ -45,4 +45,10 @@ export const UserRoute = [
     method: "put",
     roles: ["admin"],
   },
+  {
+    path: "/delete-account",
+    request: null,
+    action: UserController.deleteAccount,
+    method: "delete",
+  },
 ];

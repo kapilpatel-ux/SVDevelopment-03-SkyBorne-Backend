@@ -5,8 +5,14 @@ import { SendEmailCommand } from "@aws-sdk/client-ses";
 import sesClient from '../../../config/ses';
 import sgMail from "@sendgrid/mail";
 
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+const canUseSendGrid = Boolean(SENDGRID_API_KEY && SENDGRID_API_KEY.startsWith("SG."));
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
+if (canUseSendGrid) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+} else if (SENDGRID_API_KEY) {
+  logger.warn("SendGrid key is present but does not start with SG.; falling back to SMTP/SES for OTP emails");
+}
 
 
 export class OTPService {
@@ -135,11 +141,23 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
       `,
     };
 
-    const response = await sgMail.send(msg);
+    if (canUseSendGrid) {
+      const response = await sgMail.send(msg);
 
-    logger.info(
-      `OTP Email sent to: ${this.maskEmail(email)} | MessageID: ${response[0].headers["x-message-id"]}`
-    );
+      logger.info(
+        `OTP Email sent to: ${this.maskEmail(email)} | MessageID: ${response[0].headers["x-message-id"]}`
+      );
+      return;
+    }
+
+    await this.transporter.sendMail({
+      from: "Skyborne <info@skybornedrop.com>",
+      to: email,
+      subject: "Your Skyborne Verification Code",
+      html: msg.html,
+    });
+
+    logger.info(`OTP Email sent via SMTP to: ${this.maskEmail(email)}`);
 
   } catch (err: any) {
     logger.error(

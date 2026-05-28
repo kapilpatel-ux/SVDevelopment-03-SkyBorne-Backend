@@ -1,4 +1,5 @@
-import { AdminController } from "./admin.controller"; 
+import { AdminController } from "./admin.controller";
+import { UserController } from "../UserModule/controllers/userController";
 
 const _adminController = new AdminController();
 
@@ -69,6 +70,27 @@ export const AdminRoutes = [
     request: null,
     action: _adminController.getAccountDeletionRequests,
     method: "get",
+    roles: ["admin"],
+  },
+  {
+    path: "/account-deletion-requests/:requestId/approve",
+    request: null,
+    action: UserController.approveDeletionRequest,
+    method: "post",
+    roles: ["admin"],
+  },
+  {
+    path: "/account-deletion-requests/:requestId/reject",
+    request: null,
+    action: UserController.rejectDeletionRequest,
+    method: "post",
+    roles: ["admin"],
+  },
+  {
+    path: "/account-deletion-requests/:requestId",
+    request: null,
+    action: UserController.deleteDeletionRequest,
+    method: "delete",
     roles: ["admin"],
   },
 ];

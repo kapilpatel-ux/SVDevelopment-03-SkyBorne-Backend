@@ -127,9 +127,9 @@ export class AuthController {
           error: "User not found",
         });
 
-        return res.status(401).json({
+        return res.status(404).json({
           success: false,
-          message: "Invalid credentials",
+          message: "Account not available",
         });
       }
 
@@ -365,7 +365,7 @@ export class AuthController {
       // 1️⃣ Create temp user if not exists
       if (!tempUser) {
         tempUser = await TempUser.create({
-          email,
+          message: "Account not available",
           otpVerified: false,
         });
       }

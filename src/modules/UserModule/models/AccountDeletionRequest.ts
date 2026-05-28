@@ -5,9 +5,12 @@ export interface IAccountDeletionRequest extends Document {
   email: string;
   fullName: string;
   reason?: string;
-  status: "requested" | "processed";
+  status: "requested" | "approved" | "rejected";
   requestedAt: Date;
   processedAt?: Date | null;
+  reviewedAt?: Date | null;
+  reviewedBy?: Types.ObjectId | null;
+  rejectionReason?: string | null;
   metadata?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -38,7 +41,7 @@ const accountDeletionRequestSchema = new Schema<IAccountDeletionRequest>(
     },
     status: {
       type: String,
-      enum: ["requested", "processed"],
+      enum: ["requested", "approved", "rejected"],
       default: "requested",
       index: true,
     },
@@ -50,6 +53,20 @@ const accountDeletionRequestSchema = new Schema<IAccountDeletionRequest>(
     processedAt: {
       type: Date,
       default: null,
+    },
+    reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    reviewedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      default: null,
+      trim: true,
     },
     metadata: {
       type: Schema.Types.Mixed,

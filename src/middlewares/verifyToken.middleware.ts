@@ -1,13 +1,14 @@
 import type { Request, Response, NextFunction } from "express";
 import * as jwt from "jsonwebtoken";
 import { verifyToken } from "../config/jwt";
+import User from "../modules/UserModule/models/User";
 
 
 export interface AuthRequest extends Request {
   user?: any; // you can type this better based on your TokenPayload
 }
 
-export function verifyAccessToken(
+export async function verifyAccessToken(
   req: AuthRequest,
   res: Response,
   next: NextFunction
@@ -29,10 +30,20 @@ export function verifyAccessToken(
     // 3️⃣ Verify token
     const decoded = verifyToken(token);
 
-    // 4️⃣ Attach user data to req
+    // 4️⃣ Reject tokens for deleted/deactivated accounts
+    const user = decoded?.id ? await User.findById(decoded.id).select("_id isActive email role") : null;
+
+    if (!user || !user.isActive) {
+      return res.status(401).json({
+        success: false,
+        message: "Account is no longer active",
+      });
+    }
+
+    // 5️⃣ Attach user data to req
     req.user = decoded;
 
-    // 5️⃣ Continue
+    // 6️⃣ Continue
     next();
   } catch (error) {
     return res.status(401).json({

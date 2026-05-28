@@ -2,8 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import ProductRepository from "./product.repository";
 import productModels, { IProduct } from "./product.models";
 import mongoose from "mongoose";
-import { s3 } from "../../utils/s3";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { uploadBase64Image } from "../../utils/s3";
 import Order from "../OrderModule/order.model";
 import User from "../UserModule/models/User";
 
@@ -99,32 +98,6 @@ const assignMasterFields = (target: Partial<IProduct>, source: any) => {
       target[key] = String(source[key]).trim();
     }
   });
-};
-
-const uploadBase64Image = async (imageBase64: string): Promise<string> => {
-  const matches = imageBase64.match(/^data:(.+);base64,(.+)$/);
-  if (!matches) {
-    throw new Error("Invalid imageBase64 format");
-  }
-
-  const mimeType = matches[1];
-  const base64Data = matches[2];
-  const buffer = Buffer.from(base64Data, "base64");
-  const ext = mimeType.split("/")[1] || "jpg";
-  const key = `products/${Date.now()}-${Math.random()
-    .toString(36)
-    .slice(2, 8)}.${ext}`;
-
-  await s3.send(
-    new PutObjectCommand({
-      Bucket: process.env.AWS_S3_BUCKET!,
-      Key: key,
-      Body: buffer,
-      ContentType: mimeType,
-    })
-  );
-
-  return `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
 };
 
 export class ProductController {

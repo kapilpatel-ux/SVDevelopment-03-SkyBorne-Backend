@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import UserService from "../services/userService";
 import User from "../models/User";
 import AccountDeletionRequest from "../models/AccountDeletionRequest";
+import DeviceToken from "../../NotificationModule/models/DeviceToken";
 import MeetingAttendance from "../../MeetingModule/MeetingModels/MeetingAttendance";
 import Service from "../../ServiceModule/models/Service";
 import Meeting from "../../MeetingModule/MeetingModels/Meeting";
@@ -12,8 +13,43 @@ import { Feedback } from "../../FeedbackModule/FeedbackModel";
 import UserSubscription from "../../PaymentModule/models/Subscription";
 import { StripeService } from "../../PaymentModule/services/stripe.service";
 import { NgeniusService } from "../../../services/ngenius.service";
+import {
+  notifyAccountDeletionDecision,
+  notifyAccountDeletionRejection,
+} from "../../../services/accountDeletion.service";
 
 const userService = new UserService();
+
+async function anonymizeUserAccount(user: any) {
+  try {
+    await Payment.deleteMany({ userId: user._id });
+    await UserSubscription.deleteMany({ userId: user._id });
+    await MeetingParticipant.deleteMany({ userId: user._id });
+    await MeetingAttendance.deleteMany({ user: user._id });
+    await Feedback.deleteMany({ userId: user._id });
+  } catch (error) {
+    console.error("Error deleting related records:", error);
+  }
+
+  user.email = `deleted+${user._id}@remove.local`;
+  user.firstName = "Deleted";
+  user.lastName = "User";
+  user.phoneNumber = undefined as any;
+  user.dialingCode = undefined as any;
+  user.localNumber = undefined as any;
+  user.ngeniusCustomerId = undefined as any;
+  user.stripeCustomerId = undefined as any;
+  user.stripeSubscriptionId = undefined as any;
+  user.subscription = {
+    ...user.subscription,
+    status: "cancelled",
+    cancelledAt: new Date(),
+  } as any;
+  user.isActive = false;
+  user.onboardingCompleted = false;
+
+  await user.save();
+}
 
 export class UserController {
   // Original pagination endpoint
@@ -548,9 +584,24 @@ export class UserController {
         return res.status(404).json({ success: false, message: "User not found" });
       }
 
+      const existingRequest = await AccountDeletionRequest.findOne({
+        userId: user._id,
+        status: "requested",
+      })
+        .sort({ requestedAt: -1 })
+        .lean();
+
+      if (existingRequest) {
+        return res.status(200).json({
+          success: true,
+          message: "Account deletion request is already pending",
+          data: existingRequest,
+        });
+      }
+
       const fullName = `${user.firstName || ""} ${user.lastName || ""}`.trim() || "User";
 
-      await AccountDeletionRequest.create({
+      const request = await AccountDeletionRequest.create({
         userId: user._id,
         email: user.email,
         fullName,
@@ -563,60 +614,186 @@ export class UserController {
         },
       });
 
-      // 1) Cancel any active subscriptions with payment gateways
-      try {
-        if (user.gateway === "stripe" && user.stripeSubscriptionId) {
-          await StripeService.cancelSubscription(user.stripeSubscriptionId);
-        }
-
-        if (user.gateway === "ngenius") {
-          await NgeniusService.cancelRecurringSubscription(userId);
-        }
-      } catch (err) {
-        console.error("Error cancelling external subscription:", err);
-        // proceed even if external cancellation fails
-      }
-
-      // 2) Remove or anonymize related records
-      try {
-        await Payment.deleteMany({ userId: userId });
-        await UserSubscription.deleteMany({ userId: userId });
-        await MeetingParticipant.deleteMany({ userId: userId });
-        await MeetingAttendance.deleteMany({ user: userId });
-        await Feedback.deleteMany({ userId: userId });
-      } catch (err) {
-        console.error("Error deleting related records:", err);
-      }
-
-      // 3) Anonymize user record to remove personal identifiers
-      try {
-        user.email = `deleted+${user._id}@remove.local`;
-        user.firstName = "Deleted";
-        user.lastName = "User";
-        user.phoneNumber = undefined as any;
-        user.dialingCode = undefined as any;
-        user.localNumber = undefined as any;
-        user.ngeniusCustomerId = undefined as any;
-        user.stripeCustomerId = undefined as any;
-        user.stripeSubscriptionId = undefined as any;
-        user.subscription = { ...user.subscription, status: "cancelled", cancelledAt: new Date() } as any;
-        user.isActive = false;
-        user.onboardingCompleted = false;
-        await user.save();
-
-        await AccountDeletionRequest.updateMany(
-          { userId: user._id, status: "requested" },
-          { $set: { status: "processed", processedAt: new Date() } },
-        );
-      } catch (err) {
-        console.error("Error anonymizing user:", err);
-        return res.status(500).json({ success: false, message: "Failed to anonymize user data" });
-      }
-
-      return res.status(200).json({ success: true, message: "Account deleted and data anonymized" });
+      return res.status(200).json({
+        success: true,
+        message: "Account deletion request submitted successfully",
+        data: request,
+      });
     } catch (error: any) {
       console.error("Error deleting account:", error);
       return res.status(500).json({ success: false, message: error.message || "Failed to delete account" });
+    }
+  }
+
+  static async approveDeletionRequest(req: Request, res: Response) {
+    try {
+      const requestId = req.params.requestId;
+      const reviewedBy = req.user?.id || null;
+
+      const request = await AccountDeletionRequest.findById(requestId);
+      if (!request) {
+        return res.status(404).json({ success: false, message: "Deletion request not found" });
+      }
+
+      if (request.status !== "requested") {
+        return res.status(409).json({
+          success: false,
+          message: "Deletion request has already been reviewed",
+        });
+      }
+
+      const user = await User.findById(request.userId);
+      if (!user) {
+        return res.status(404).json({ success: false, message: "User not found" });
+      }
+
+      const recipientName =
+        [user.firstName, user.lastName].filter(Boolean).join(" ").trim() || request.fullName;
+
+      const gateway = String(user.gateway || request.metadata?.gateway || "").toLowerCase();
+
+      try {
+        if (gateway === "stripe" && user.stripeSubscriptionId) {
+          await StripeService.cancelSubscription(user.stripeSubscriptionId);
+        }
+
+        if (gateway === "ngenius") {
+          await NgeniusService.cancelRecurringSubscription(String(user._id));
+        }
+      } catch (error) {
+        console.error("Error cancelling external subscription:", error);
+      }
+
+      await anonymizeUserAccount(user);
+
+      const notifications = await notifyAccountDeletionDecision({
+        userId: String(user._id),
+        email: request.email,
+        firstName: recipientName,
+        decision: "approved",
+      });
+
+      const updatedRequest = await AccountDeletionRequest.findByIdAndUpdate(
+        request._id,
+        {
+          $set: {
+            status: "approved",
+            processedAt: new Date(),
+            reviewedAt: new Date(),
+            reviewedBy,
+            rejectionReason: null,
+          },
+        },
+        { new: true },
+      );
+
+      try {
+        await DeviceToken.deleteMany({ userId: user._id });
+      } catch (error) {
+        console.error("Error deleting device tokens after account approval:", error);
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Account deletion request approved and user account removed",
+        data: updatedRequest,
+        notifications,
+      });
+    } catch (error: any) {
+      console.error("Error approving deletion request:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to approve deletion request",
+      });
+    }
+  }
+
+  static async rejectDeletionRequest(req: Request, res: Response) {
+    try {
+      const requestId = req.params.requestId;
+      const reviewedBy = req.user?.id || null;
+      const rejectionReason =
+        typeof req.body?.reason === "string" && req.body.reason.trim().length > 0
+          ? req.body.reason.trim()
+          : "No reason provided by admin";
+
+      const request = await AccountDeletionRequest.findById(requestId);
+      if (!request) {
+        return res.status(404).json({ success: false, message: "Deletion request not found" });
+      }
+
+      if (request.status !== "requested") {
+        return res.status(409).json({
+          success: false,
+          message: "Deletion request has already been reviewed",
+        });
+      }
+
+      const updatedRequest = await AccountDeletionRequest.findByIdAndUpdate(
+        request._id,
+        {
+          $set: {
+            status: "rejected",
+            processedAt: new Date(),
+            reviewedAt: new Date(),
+            reviewedBy,
+            rejectionReason,
+          },
+        },
+        { new: true },
+      );
+
+      const notifications = await notifyAccountDeletionRejection({
+        userId: String(request.userId),
+        email: request.email,
+        firstName: request.fullName,
+        reason: rejectionReason,
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Account deletion request rejected",
+        data: updatedRequest,
+        notifications,
+      });
+    } catch (error: any) {
+      console.error("Error rejecting deletion request:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to reject deletion request",
+      });
+    }
+  }
+
+  static async deleteDeletionRequest(req: Request, res: Response) {
+    try {
+      const requestId = req.params.requestId;
+      const request = await AccountDeletionRequest.findById(requestId);
+
+      if (!request) {
+        return res.status(404).json({ success: false, message: "Deletion request not found" });
+      }
+
+      if (request.status !== "requested") {
+        return res.status(409).json({
+          success: false,
+          message: "Only pending deletion requests can be deleted",
+        });
+      }
+
+      await AccountDeletionRequest.findByIdAndDelete(requestId);
+
+      return res.status(200).json({
+        success: true,
+        message: "Deletion request deleted successfully",
+        data: request,
+      });
+    } catch (error: any) {
+      console.error("Error deleting deletion request:", error);
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Failed to delete deletion request",
+      });
     }
   }
 }

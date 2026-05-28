@@ -296,7 +296,7 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
 
       const query: Record<string, any> = {};
       if (status !== "all") {
-        query.status = status;
+        query.status = status === "approved" ? { $in: ["approved", "processed"] } : status;
       }
 
       const [items, total] = await Promise.all([
@@ -308,10 +308,15 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
         AccountDeletionRequest.countDocuments(query),
       ]);
 
+      const normalizedItems = items.map((item: any) => ({
+        ...item,
+        status: item.status === "processed" ? "approved" : item.status,
+      }));
+
       res.status(200).json({
         success: true,
         data: {
-          items,
+          items: normalizedItems,
           pagination: {
             currentPage: page,
             totalPages: Math.ceil(total / limit),
