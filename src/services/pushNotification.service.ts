@@ -873,7 +873,7 @@ export class PushNotificationService {
       userId,
       {
         title: "Don’t Miss Out",
-        body: `Please ensure sufficient balance in your bank account for seamless AutoPay subscription renewal. Your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}).`,
+        body: `Don’t miss out — ensure sufficient balance for AutoPay renewal. Your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}).`,
         highPriority: false,
         data: {
           type: "subscription.expiry",
