@@ -1,5 +1,6 @@
 import sgMail from "@sendgrid/mail";
 import { PushNotificationService } from "./pushNotification.service";
+import User from "../modules/UserModule/models/User";
 
 export type AccountDeletionDecision = "approved" | "rejected";
 
@@ -99,16 +100,36 @@ const sendDeletionEmail = async (
   try {
     sgMail.setApiKey(apiKey);
 
+    const recipientUser = await User.findById(params.userId).select("email firstName lastName").lean();
+    const recipientEmail = String(recipientUser?.email || params.email || "").trim();
+
+    if (!recipientEmail) {
+      return {
+        sent: false,
+        error: "Recipient email not found",
+      };
+    }
+
+    const recipientName =
+      [recipientUser?.firstName, recipientUser?.lastName].filter(Boolean).join(" ").trim() ||
+      params.firstName;
+
     const subject =
       params.decision === "approved"
         ? "Your SkyBorne account has been deleted"
         : "Your SkyBorne account deletion request was rejected";
 
     await sgMail.send({
-      to: params.email,
+      to: recipientEmail,
       from: fromEmail,
       subject,
-      html: buildEmailHtml(params.decision, params.firstName, params.reason),
+      personalizations: [
+        {
+          to: [{ email: recipientEmail, name: recipientName || undefined }],
+          subject,
+        },
+      ],
+      html: buildEmailHtml(params.decision, recipientName, params.reason),
     });
 
     return { sent: true };
