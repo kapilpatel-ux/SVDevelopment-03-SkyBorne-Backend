@@ -1320,7 +1320,11 @@ static async GetMeetingRecording(req: Request, res: Response) {
         timeout: 10000,
         maxRedirects: 5,
       });
-      fileSize = parseInt(headResponse.headers["content-length"] || "0", 10);
+      const contentLength = headResponse.headers["content-length"];
+      const contentLengthValue = Array.isArray(contentLength)
+        ? contentLength[0] || "0"
+        : String(contentLength || "0");
+      fileSize = parseInt(contentLengthValue, 10);
       console.log(`[${requestId}] ✅ HEAD request successful`);
       console.log(`[${requestId}]   Status: ${headResponse.status}`);
       console.log(`[${requestId}]   Content-Type: ${headResponse.headers["content-type"]}`);
@@ -2744,7 +2748,7 @@ static async GetMeetingRecording(req: Request, res: Response) {
         "meeting-share-secret";
 
       const token = jwt.sign(
-        { meetingId: (meeting._id as number).toString(), typ: "meeting_share" },
+        { meetingId: String(meeting._id), typ: "meeting_share" },
         secret,
         { expiresIn: ttlSec },
       );

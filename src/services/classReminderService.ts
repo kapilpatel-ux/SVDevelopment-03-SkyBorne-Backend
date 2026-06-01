@@ -211,7 +211,7 @@ static async getCountriesByRegion(regionName: string) {
       }
 
       console.log("[ClassReminderService] sendClassReminder:meeting-found", {
-        meetingId: (meeting._id as string)?.toString?.() || meetingId,
+        meetingId: String(meeting._id || meetingId),
         title: meeting.title,
         region: meeting.liveRegion,
         localTime: meeting.localTime,
@@ -296,14 +296,14 @@ static async getCountriesByRegion(regionName: string) {
         resolveMeetingRegionDetails(meeting);
 
       console.log("[ClassReminderService] sendClassReminder:queue-job", {
-        meetingId: (meeting._id as string).toString(),
+        meetingId: String(meeting._id),
         region,
         usersCount: uniqueUserEmails.length,
         trainerName,
       });
 
       const reminderJobPayload = {
-        meetingId: (meeting._id as string).toString(),
+        meetingId: String(meeting._id),
         meetingTitle: meeting.title,
         region: region,
         reminderOffsetMinutes: minutesBefore,
@@ -321,7 +321,7 @@ static async getCountriesByRegion(regionName: string) {
       // Skip sending reminder emails at event time (0-minute); only send earlier reminders.
       if (minutesBefore === 0) {
         console.log("[ClassReminderService] sendClassReminder:skip-email-at-event", {
-          meetingId: (meeting._id as string).toString(),
+          meetingId: String(meeting._id),
           minutesBefore,
         });
       } else {
@@ -329,7 +329,7 @@ static async getCountriesByRegion(regionName: string) {
           await addClassReminderEmailJob(reminderJobPayload);
         } catch (queueError: any) {
           console.error("[ClassReminderService] Queue add failed", {
-            meetingId: (meeting._id as string).toString(),
+            meetingId: String(meeting._id),
             minutesBefore,
             error: queueError?.message || queueError,
           });
@@ -345,7 +345,7 @@ static async getCountriesByRegion(regionName: string) {
 
       // Send push reminders with localized times per user
       if (pushUserIds.length > 0 && shouldSendPushReminder) {
-        const meetingIdString = (meeting._id as string).toString();
+        const meetingIdString = String(meeting._id);
         const classStartAt = new Date(meeting.localTime);
 
         console.log("[ClassReminderService] sendClassReminder:push-start", {
@@ -488,7 +488,7 @@ static async getCountriesByRegion(regionName: string) {
 
         const region = meeting.liveRegion;
         console.log("[ClassReminderService] sendImmediateClassReminder:meeting-found", {
-          meetingId: (meeting._id as string)?.toString?.() || meetingId,
+          meetingId: String(meeting._id || meetingId),
           title: meeting.title,
           region,
           localTime: meeting.localTime,
@@ -540,14 +540,14 @@ static async getCountriesByRegion(regionName: string) {
         resolveMeetingRegionDetails(meeting);
 
       console.log("[ClassReminderService] sendImmediateClassReminder:queue-job", {
-        meetingId: (meeting._id as string).toString(),
+        meetingId: String(meeting._id),
         region,
         usersCount: uniqueUserEmails.length,
         trainerName,
       });
 
       await addClassReminderEmailJob({
-        meetingId: (meeting._id as string).toString(),
+        meetingId: String(meeting._id),
         meetingTitle: meeting.title,
         region: region,
         reminderOffsetMinutes: 10,
@@ -563,7 +563,7 @@ static async getCountriesByRegion(regionName: string) {
       });
 
       console.log("[ClassReminderService] sendImmediateClassReminder:queued", {
-        meetingId: (meeting._id as string).toString(),
+        meetingId: String(meeting._id),
         usersCount: uniqueUserEmails.length,
       });
 

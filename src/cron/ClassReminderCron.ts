@@ -59,7 +59,7 @@ export const startClassReminderCron = () => {
             claimed = true;
 
             await ClassReminderService.sendClassReminder(
-              (meeting._id as string).toString(),
+              String(meeting._id),
               reminder.minutesBefore,
             );
 
