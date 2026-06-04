@@ -230,7 +230,7 @@ export class EcomStripeService {
     const orderRef = `ECOM-${Date.now()}`;
 
     // Build Stripe line items from cart
-    const lineItems: Stripe.Checkout.SessionCreateParams.LineItem[] = cartItems.map(
+    const lineItems = cartItems.map(
       (item) => ({
         price_data: {
           currency: "usd",

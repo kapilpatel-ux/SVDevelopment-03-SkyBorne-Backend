@@ -14,6 +14,10 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-12-15.clover",
 });
 
+type StripeCheckoutSession = Awaited<
+  ReturnType<typeof stripe.checkout.sessions.retrieve>
+>;
+
 const ZERO_DECIMAL_CURRENCIES = new Set([
   "bif", "clp", "djf", "gnf", "jpy", "kmf", "krw",
   "mga", "pyg", "rwf", "ugx", "vnd", "vuv", "xaf", "xof", "xpf",
@@ -126,7 +130,7 @@ const getInvoicePaymentReference = (invoice: Stripe.Invoice): string => {
 };
 
 const getCheckoutTransactionId = (
-  session: Stripe.Checkout.Session,
+  session: StripeCheckoutSession,
 ): string | null => {
   const paymentIntent = session.payment_intent;
   if (!paymentIntent) return null;
@@ -134,7 +138,7 @@ const getCheckoutTransactionId = (
 };
 
 const getCheckoutInvoiceId = (
-  session: Stripe.Checkout.Session,
+  session: StripeCheckoutSession,
 ): string | null => {
   const invoice = session.invoice;
   if (!invoice) return null;
@@ -216,7 +220,7 @@ const resolveInvoiceTransactionId = async (
 };
 
 const resolveCheckoutPaymentIntentId = async (
-  session: Stripe.Checkout.Session,
+  session: StripeCheckoutSession,
 ): Promise<string | null> => {
   const directCheckoutPi = getCheckoutTransactionId(session);
   if (directCheckoutPi?.startsWith("pi_")) {
@@ -288,7 +292,7 @@ router.post(
 
         // ── Subscription Activation ───────────────────────────────────────
         case "checkout.session.completed": {
-          const session = event.data.object as Stripe.Checkout.Session;
+          const session = event.data.object as StripeCheckoutSession;
           const { orderRef } = session.metadata || {};
           const sessionInvoiceId = getCheckoutInvoiceId(session);
           const resolvedPaymentIntentId =

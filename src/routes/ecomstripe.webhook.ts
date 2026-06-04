@@ -4,6 +4,9 @@ import { EcomStripeService } from "../services/EcomStripe.service";
 import EcomPayment from "../modules/EcomPaymentModule/Ecompayment.model";
 
 const router = express.Router();
+type StripeCheckoutSession = Awaited<
+  ReturnType<Stripe["checkout"]["sessions"]["retrieve"]>
+>;
 
 /**
  * POST /webhooks/ecom-stripe
@@ -66,7 +69,7 @@ router.post(
          * not mode: "subscription" sessions (handled by other webhook)
          */
         case "checkout.session.completed": {
-          const session = event.data.object as Stripe.Checkout.Session;
+          const session = event.data.object as StripeCheckoutSession;
 
           // ── Guard: only process ecom sessions ────────────────────────────
           if (session.metadata?.type !== "ecom") {

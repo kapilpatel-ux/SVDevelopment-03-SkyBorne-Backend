@@ -19,6 +19,14 @@ interface RecurringPaymentConfig {
   retryDelayMs?: number;
 }
 
+type StripeClient = InstanceType<typeof Stripe>;
+type StripeSubscription = Awaited<
+  ReturnType<StripeClient["subscriptions"]["list"]>
+>["data"][number];
+type StripeCheckoutSession = Awaited<
+  ReturnType<StripeClient["checkout"]["sessions"]["retrieve"]>
+>;
+
 export class StripeService {
   private static stripe: Stripe;
   private static readonly DEFAULT_RECURRING_CONFIG: RecurringPaymentConfig = {
@@ -65,7 +73,7 @@ export class StripeService {
    */
   static async getCustomerSubscriptions(
     customerId: string,
-  ): Promise<Stripe.Subscription[]> {
+  ): Promise<StripeSubscription[]> {
     try {
       const stripe = this.getStripeClient();
       const subscriptions = await stripe.subscriptions.list({
@@ -146,7 +154,7 @@ export class StripeService {
         
   //       success_url:successUrl,
   //       cancel_url: cancelUrl,
-  //     } as Stripe.Checkout.SessionCreateParams);
+  //     });
 
   //     // Create payment record
   //     const payment = await Payment.create({
@@ -320,7 +328,7 @@ export class StripeService {
 
       // Always use a consistent Stripe customer id (reuse if exists, else create once).
       const customerId = await this.getOrCreateCustomer(user);
-      const metadata: Stripe.MetadataParam = {
+      const metadata: Record<string, string> = {
         userId,
         plan,
         orderRef,
@@ -348,9 +356,9 @@ export class StripeService {
         }
       }
 
-      const sessionCreateParams: Stripe.Checkout.SessionCreateParams = {
-        payment_method_types: ["card"],
-        mode: "subscription",
+      const sessionCreateParams = {
+        payment_method_types: ["card" as const],
+        mode: "subscription" as const,
         line_items: [
           {
             price_data: {
@@ -372,14 +380,15 @@ export class StripeService {
         success_url: successUrl,
         cancel_url: cancelUrl,
         customer: customerId,
+        ...(deferredAnchorUnix
+          ? {
+              subscription_data: {
+                billing_cycle_anchor: deferredAnchorUnix,
+                proration_behavior: "none" as const,
+              },
+            }
+          : {}),
       };
-
-      if (deferredAnchorUnix) {
-        sessionCreateParams.subscription_data = {
-          billing_cycle_anchor: deferredAnchorUnix,
-          proration_behavior: "none",
-        };
-      }
 
       // Create checkout session with LOCAL CURRENCY
       const session = await this.stripe.checkout.sessions.create(
@@ -433,7 +442,7 @@ export class StripeService {
    */
   static async getCheckoutSession(
     sessionId: string,
-  ): Promise<Stripe.Checkout.Session> {
+  ): Promise<StripeCheckoutSession> {
     try {
       const session = await this.stripe.checkout.sessions.retrieve(sessionId);
       return session;
@@ -699,7 +708,6 @@ export class StripeService {
         const paymentMethods = await stripe.paymentMethods.list({
           customer: customerId,
           type: "card",
-          limit: 1,
         });
         defaultPaymentMethodId = paymentMethods?.data?.[0]?.id || null;
       } catch (error: any) {

@@ -9,7 +9,7 @@ const redisClient = createClient({
   disableOfflineQueue: true, // Upstash recommended
   socket: {
     keepAlive: true,
-    reconnectStrategy: (retries) => {
+    reconnectStrategy: (retries: number) => {
       if (retries > 10) {
         logger.error("Redis reconnection failed.");
         return new Error("Redis reconnection failed.");
@@ -19,7 +19,7 @@ const redisClient = createClient({
   },
 });
 
-redisClient.on('error', (err) => {
+redisClient.on('error', (err: Error) => {
   logger.error(`Redis Client Error: ${err.message}`);
   console.error('❌ Redis Client Error:', err);
 });
