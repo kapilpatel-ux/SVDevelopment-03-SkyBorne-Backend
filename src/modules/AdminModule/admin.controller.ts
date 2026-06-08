@@ -704,16 +704,13 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
 
 getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
   try {
-    // Aggregate payments by country
     const revenueByCountry = await Payment.aggregate([
       {
-        // Step 1: Match only completed payments
         $match: {
           status: "COMPLETED",
         },
       },
       {
-        // Step 2: Lookup user information to get country
         $lookup: {
           from: "users",
           localField: "userId",
@@ -722,46 +719,55 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
         },
       },
       {
-        // Step 3: Unwind the user array
         $unwind: {
           path: "$userInfo",
           preserveNullAndEmptyArrays: true,
         },
       },
       {
-        // Step 4: Group by country and sum amounts
         $group: {
           _id: "$userInfo.country",
           totalAmount: { $sum: "$amount" },
           count: { $sum: 1 },
+          activeUsers: {
+            // ✅ Only count users whose subscription.status is "active"
+            $addToSet: {
+              $cond: {
+                if: { $eq: ["$userInfo.subscription.status", "active"] },
+                then: "$userInfo._id",
+                else: "$$REMOVE",
+              },
+            },
+          },
         },
       },
       {
-        // Step 5: Sort by total amount descending
         $sort: { totalAmount: -1 },
       },
     ]);
 
-    // Calculate grand total
     const grandTotal = revenueByCountry.reduce(
       (sum, item) => sum + item.totalAmount,
       0
     );
 
-    // Format the data
     const formattedData = revenueByCountry.map((item) => ({
       country: item._id || "N/A",
       count: item.count,
       amount: item.totalAmount,
+      // ✅ Filter out the null/"$$REMOVE" entries that didn't match
+      activeUsers: item.activeUsers.filter(
+        (id: any) => id !== null && id !== undefined
+      ).length,
     }));
 
-    // Add grand total row
     const tableData = {
       rows: formattedData,
       grandTotal: {
         country: "Grand Total",
         count: formattedData.reduce((sum, row) => sum + row.count, 0),
         amount: grandTotal,
+        activeUsers: formattedData.reduce((sum, row) => sum + row.activeUsers, 0),
       },
     };
 
