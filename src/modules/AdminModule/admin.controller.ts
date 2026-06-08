@@ -704,6 +704,33 @@ getOverviewStats = async (req: Request, res: Response): Promise<void> => {
 
 getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
   try {
+    // ✅ Step 1: Get active users per country directly from User collection
+    // (same logic as getOverviewStats — no payment filter)
+    const activeUsersByCountry = await User.aggregate([
+      {
+        $match: {
+          onboardingCompleted: true,
+          role: "user",
+        },
+      },
+      {
+        $group: {
+          _id: "$country",
+          activeUsers: { $sum: 1 },
+        },
+      },
+    ]);
+
+    // Convert to a map for quick lookup: { "UAE": 3, "Canada": 1, ... }
+    const activeUsersMap = activeUsersByCountry.reduce(
+      (map: Record<string, number>, item) => {
+        map[item._id || "N/A"] = item.activeUsers;
+        return map;
+      },
+      {}
+    );
+
+    // ✅ Step 2: Get revenue & invoice count per country from payments
     const revenueByCountry = await Payment.aggregate([
       {
         $match: {
@@ -729,21 +756,6 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
           _id: "$userInfo.country",
           totalAmount: { $sum: "$amount" },
           count: { $sum: 1 },
-          activeUsers: {
-            $addToSet: {
-              $cond: {
-                // ✅ Same condition as getOverviewStats
-                if: {
-                  $and: [
-                    { $eq: ["$userInfo.onboardingCompleted", true] },
-                    { $eq: ["$userInfo.role", "user"] },
-                  ],
-                },
-                then: "$userInfo._id",
-                else: "$$REMOVE",
-              },
-            },
-          },
         },
       },
       {
@@ -756,12 +768,22 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
       0
     );
 
-    const formattedData = revenueByCountry.map((item) => ({
-      country: item._id || "N/A",
-      count: item.count,
-      amount: item.totalAmount,
-      activeUsers: item.activeUsers.length,
-    }));
+    // ✅ Step 3: Merge active user counts into revenue rows
+    const formattedData = revenueByCountry.map((item) => {
+      const country = item._id || "N/A";
+      return {
+        country,
+        count: item.count,
+        amount: item.totalAmount,
+        activeUsers: activeUsersMap[country] ?? 0, // from User collection directly
+      };
+    });
+
+    // ✅ Grand total activeUsers = sum from User collection (matches dashboard tile)
+    const totalActiveUsers = activeUsersByCountry.reduce(
+      (sum, item) => sum + item.activeUsers,
+      0
+    );
 
     const tableData = {
       rows: formattedData,
@@ -769,7 +791,7 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
         country: "Grand Total",
         count: formattedData.reduce((sum, row) => sum + row.count, 0),
         amount: grandTotal,
-        activeUsers: formattedData.reduce((sum, row) => sum + row.activeUsers, 0),
+        activeUsers: totalActiveUsers, // ✅ Will now match dashboard tile exactly
       },
     };
 
