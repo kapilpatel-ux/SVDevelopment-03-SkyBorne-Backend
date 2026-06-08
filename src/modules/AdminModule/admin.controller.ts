@@ -730,10 +730,15 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
           totalAmount: { $sum: "$amount" },
           count: { $sum: 1 },
           activeUsers: {
-            // ✅ Only count users whose subscription.status is "active"
             $addToSet: {
               $cond: {
-                if: { $eq: ["$userInfo.subscription.status", "active"] },
+                // ✅ Same condition as getOverviewStats
+                if: {
+                  $and: [
+                    { $eq: ["$userInfo.onboardingCompleted", true] },
+                    { $eq: ["$userInfo.role", "user"] },
+                  ],
+                },
                 then: "$userInfo._id",
                 else: "$$REMOVE",
               },
@@ -755,10 +760,7 @@ getRevenueByCountry = async (req: Request, res: Response): Promise<void> => {
       country: item._id || "N/A",
       count: item.count,
       amount: item.totalAmount,
-      // ✅ Filter out the null/"$$REMOVE" entries that didn't match
-      activeUsers: item.activeUsers.filter(
-        (id: any) => id !== null && id !== undefined
-      ).length,
+      activeUsers: item.activeUsers.length,
     }));
 
     const tableData = {
