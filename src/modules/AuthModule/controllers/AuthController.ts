@@ -365,7 +365,7 @@ export class AuthController {
       // 1️⃣ Create temp user if not exists
       if (!tempUser) {
         tempUser = await TempUser.create({
-          message: "Account not available",
+          email,
           otpVerified: false,
         });
       }
