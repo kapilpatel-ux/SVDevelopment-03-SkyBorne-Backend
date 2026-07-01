@@ -7,29 +7,29 @@
 */
 
 import { NextFunction, Request, Response } from 'express';
+import { HttpError } from './httpError.handler';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function catchErrors(fn: any) {
   return function (req: Request, res: Response, next: NextFunction) {
     return fn(req, res, next).catch((error: Error) => {
-      if (error.name == 'ValidationError') {
+      if (error.name === 'ValidationError') {
         return res.status(400).json({
           success: false,
-          result: null,
           message: 'Required fields are not supplied',
-          controller: fn.name,
-          error: error,
-        });
-      } else {
-        // Server Error
-        return res.status(500).json({
-          success: false,
-          result: null,
-          message: error.message,
-          controller: fn.name,
-          error: error,
         });
       }
+
+      if (error instanceof HttpError) {
+        return next(error);
+      }
+
+      console.error(
+        `[catchErrors] Controller "${fn.name || 'anonymous'}" failed:`,
+        error
+      );
+
+      return next(error);
     });
   };
 }

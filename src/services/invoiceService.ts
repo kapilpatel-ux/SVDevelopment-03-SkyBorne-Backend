@@ -2,6 +2,7 @@
 import PDFDocument from "pdfkit";
 import { Readable } from "stream";
 import sgMail from "@sendgrid/mail";
+import { calculateVatFromTotal } from "../utils/vat";
 
 export interface InvoiceData {
   invoiceId: string;
@@ -12,9 +13,11 @@ export interface InvoiceData {
   plan: string;
   amount: number;
   currency: string;
+  transactionId?: string;
   date: Date;
   subscriptionEndDate: Date;
   paymentMethod: string;
+  taxRate?: number;
 }
 
 export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> => {
@@ -27,6 +30,10 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.on("error", reject);
 
     const PAGE_WIDTH = 545;
+    const displayCurrency = "USD";
+    const taxRate = Number.isFinite(invoiceData.taxRate) ? invoiceData.taxRate! : 0;
+    const totals = calculateVatFromTotal(invoiceData.amount, taxRate);
+    const taxLabel = taxRate > 0 ? `VAT (${Math.round(taxRate * 100)}%)` : "Tax (0%)";
 
     doc.font("Helvetica-Bold").fontSize(24).text("INVOICE");
     doc.moveDown(0.8);
@@ -34,6 +41,7 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.font("Helvetica").fontSize(10)
       .text(`Invoice ID: ${invoiceData.invoiceId}`)
       .text(`Order Reference: ${invoiceData.orderRef}`)
+      .text(`Transaction ID: ${invoiceData.transactionId || "N/A"}`)
       .text(`Date: ${invoiceData.date.toLocaleDateString()}`)
       .text(`User ID: ${invoiceData.userId}`);
 
@@ -84,23 +92,23 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.font("Helvetica").fontSize(10)
       .text("Subscription Plan", col.desc, rowY)
       .text(invoiceData.plan, col.plan, rowY)
-      .text(`${invoiceData.currency} ${invoiceData.amount.toFixed(2)}`, col.amt, rowY)
-      .text(`${invoiceData.currency} ${invoiceData.amount.toFixed(2)}`, col.total, rowY);
+      .text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, col.amt, rowY)
+      .text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, col.total, rowY);
 
     doc.moveDown(2);
 
     const sumX = 350;
 
     doc.font("Helvetica-Bold").fontSize(11).text("Subtotal:", sumX);
-    doc.font("Helvetica").fontSize(10).text(`${invoiceData.currency} ${invoiceData.amount.toFixed(2)}`, sumX);
+    doc.font("Helvetica").fontSize(10).text(`${displayCurrency} ${totals.subtotal.toFixed(2)}`, sumX);
 
     doc.moveDown(0.3);
-    doc.font("Helvetica-Bold").fontSize(11).text("Tax (0%):", sumX);
-    doc.font("Helvetica").fontSize(10).text(`${invoiceData.currency} 0.00`, sumX);
+    doc.font("Helvetica-Bold").fontSize(11).text(`${taxLabel}:`, sumX);
+    doc.font("Helvetica").fontSize(10).text(`${displayCurrency} ${totals.vatAmount.toFixed(2)}`, sumX);
 
     doc.moveDown(0.3);
     doc.font("Helvetica-Bold").fontSize(12).text("Total:", sumX);
-    doc.font("Helvetica-Bold").fontSize(12).text(`${invoiceData.currency} ${invoiceData.amount.toFixed(2)}`, sumX);
+    doc.font("Helvetica-Bold").fontSize(12).text(`${displayCurrency} ${totals.total.toFixed(2)}`, sumX);
 
     doc.moveDown(2);
 
@@ -108,7 +116,8 @@ export const generateInvoicePDF = (invoiceData: InvoiceData): Promise<Buffer> =>
     doc.font("Helvetica").fontSize(10)
       .text(`Plan: ${invoiceData.plan}`)
       .text(`Subscription End Date: ${invoiceData.subscriptionEndDate.toLocaleDateString()}`)
-      .text(`Payment Method: ${invoiceData.paymentMethod}`);
+      .text(`Payment Method: ${invoiceData.paymentMethod}`)
+      .text(`Transaction ID: ${invoiceData.transactionId || "N/A"}`);
 
     doc.moveDown(3);
     doc.fontSize(8).font("Helvetica")
@@ -129,6 +138,10 @@ export const sendInvoiceEmail = async (
   sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 
   const fileName = `invoice-${invoiceData.invoiceId}.pdf`;
+  const taxRate = Number.isFinite(invoiceData.taxRate) ? invoiceData.taxRate! : 0;
+  const totals = calculateVatFromTotal(invoiceData.amount, taxRate);
+  const taxLabel = taxRate > 0 ? `VAT (${Math.round(taxRate * 100)}%)` : "Tax (0%)";
+  const displayCurrency = "USD";
 
   const msg = {
     to: invoiceData.userEmail,
@@ -153,16 +166,34 @@ export const sendInvoiceEmail = async (
           <td>${invoiceData.date.toLocaleDateString()}</td>
         </tr>
         <tr>
+          <td><strong>Transaction ID:</strong></td>
+          <td>${invoiceData.transactionId || "N/A"}</td>
+        </tr>
+        <tr>
           <td><strong>Plan:</strong></td>
           <td>${invoiceData.plan}</td>
         </tr>
         <tr>
           <td><strong>Amount:</strong></td>
-          <td>${invoiceData.currency} ${invoiceData.amount.toFixed(2)}</td>
+          <td>${displayCurrency} ${invoiceData.amount.toFixed(2)}</td>
         </tr>
         <tr>
           <td><strong>Subscription Ends:</strong></td>
           <td>${invoiceData.subscriptionEndDate.toLocaleDateString()}</td>
+        </tr>
+      </table>
+      <table style="width: 100%; margin: 20px 0;">
+        <tr>
+          <td><strong>Subtotal:</strong></td>
+          <td>${displayCurrency} ${totals.subtotal.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td><strong>${taxLabel}:</strong></td>
+          <td>${displayCurrency} ${totals.vatAmount.toFixed(2)}</td>
+        </tr>
+        <tr>
+          <td><strong>Total:</strong></td>
+          <td>${displayCurrency} ${totals.total.toFixed(2)}</td>
         </tr>
       </table>
       <hr />

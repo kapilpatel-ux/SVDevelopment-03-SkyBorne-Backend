@@ -101,34 +101,15 @@ export class RegionController {
       const {
         name,
         code,
-        timezone,
-        replayTime,
         status = "active",
       } = req.body;
 
       // Validate required fields
-      if (!name || !code || !timezone  || !replayTime) {
+      if (!name || !code ) {
         return res.status(400).json({
           success: false,
           message:
-            "Name, code, timezone, and replayTime are required",
-        });
-      }
-
-      // Validate timezone format (basic check)
-      if (typeof timezone !== "string" || timezone.trim().length === 0) {
-        return res.status(400).json({
-          success: false,
-          message: "Timezone must be a valid string",
-        });
-      }
-
-      // Validate replayTime format (HH:MM AM/PM)
-      const timeRegex = /^(0?[1-9]|1[0-2]):[0-5][0-9]\s(AM|PM)$/i;
-      if (!timeRegex.test(replayTime)) {
-        return res.status(400).json({
-          success: false,
-          message: "Replay time must be in format HH:MM AM/PM",
+            "Name and code are required",
         });
       }
 
@@ -159,9 +140,9 @@ export class RegionController {
       const regionData: Partial<IRegion> = {
         name: name.trim(),
         code: code.toUpperCase(),
-        timezone: timezone.trim(),
-        displayLabel: name.trim(),
-        replayTime: replayTime.trim(),
+        // timezone: timezone.trim(),
+        // displayLabel: name.trim(),
+        // replayTime: replayTime.trim(),
         status: status as "active" | "inactive",
       };
 

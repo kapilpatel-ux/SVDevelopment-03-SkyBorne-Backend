@@ -4,6 +4,8 @@ import {
   JoinMeetingSchema,
   LeaveMeetingSchema,
   UpcomingMeetingsSchema,
+  ShareMeetingLinkSchema,
+  RedirectMeetingSchema,
 } from "./MeetingModels/MeetingValidation";
 
 export const MeetingRoute = [
@@ -18,6 +20,25 @@ export const MeetingRoute = [
     request: JoinMeetingSchema,
     action: MeetingController.JoinMeeting,
     method: "post",
+  },
+  {
+    path: "/meetings/share-link",
+    request: ShareMeetingLinkSchema,
+    action: MeetingController.CreateShareLink,
+    method: "post",
+    roles: ["admin"],
+  },
+  {
+    path: "/meetings/redirect",
+    request: RedirectMeetingSchema,
+    action: MeetingController.RedirectMeeting,
+    method: "post",
+  },
+  {
+    path: "/open/class/:meetingId",
+    request: null,
+    action: MeetingController.DeepLinkRedirect,
+    method: "get",
   },
   {
     path: "/meetings/upcoming",
@@ -67,7 +88,6 @@ export const MeetingRoute = [
     action: MeetingController.GetTrainerUpcomingMeetings,
     method: "get",
   },
-
   {
     path: "/meetings/getAll",
     request: null,
@@ -78,6 +98,18 @@ export const MeetingRoute = [
     path: "/meetings/past",
     request: null,
     action: MeetingController.GetPastSessions,
+    method: "get",
+  },
+  {
+    path: "/meetings/session-history",
+    request: null,
+    action: MeetingController.GetSessionHistory,
+    method: "get",
+  },
+  {
+    path: "/meetings/completed-sessions",
+    request: null,
+    action: MeetingController.getSessionsWithPagination,
     method: "get",
   },
   {

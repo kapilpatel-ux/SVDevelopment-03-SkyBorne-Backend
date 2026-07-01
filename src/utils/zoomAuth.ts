@@ -11,9 +11,17 @@ interface ZoomTokenResponse {
   scope: string;
 }
 
-export async function getZoomAccessToken(): Promise<string> {
+export function clearZoomTokenCache(): void {
+  cachedToken = null;
+  tokenExpiry = null;
+}
+
+export async function getZoomAccessToken(
+  options?: { forceRefresh?: boolean },
+): Promise<string> {
+  const forceRefresh = Boolean(options?.forceRefresh);
   // Return cached token when valid
-  if (cachedToken && tokenExpiry && tokenExpiry > Date.now()) {
+  if (!forceRefresh && cachedToken && tokenExpiry && tokenExpiry > Date.now()) {
     return cachedToken;
   }
 
@@ -43,6 +51,7 @@ export async function getZoomAccessToken(): Promise<string> {
 
   cachedToken = response.data.access_token;
   tokenExpiry = Date.now() + response.data.expires_in * 1000;
+  console.log("[ZoomAuth] Token refreshed. Scope:", response.data.scope);
 
   return cachedToken;
 }

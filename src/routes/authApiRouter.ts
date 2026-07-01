@@ -32,6 +32,13 @@ const routes = [
     action: AuthController.requestPasswordReset,
     method: "post",
   },
+  // Alias for frontend naming consistency (forgot-password == request-password-reset)
+  {
+    name: "/forgot-password",
+    middleware: validateData(sendOtpValidation),
+    action: AuthController.requestPasswordReset,
+    method: "post",
+  },
   {
     name: "/verify-otp",
     middleware: validateData(verifyOtpValidation),

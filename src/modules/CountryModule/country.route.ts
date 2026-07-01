@@ -19,6 +19,14 @@ export const CountryRoute = [
     method: "get",
   },
 
+  // Get current user's region history windows
+  {
+    path: "/countries/my/region-history",
+    request: null,
+    action: _countryController.getMyRegionHistory,
+    method: "get",
+  },
+
   // Create new country
   {
     path: "/create-country",

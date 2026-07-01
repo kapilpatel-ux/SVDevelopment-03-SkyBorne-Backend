@@ -18,6 +18,9 @@ import { AuthService } from "../services/authService";
 import TempUser from "../../UserModule/models/TempUser";
 import extractPhoneDetails from "../../../utils/extractPhoneDetail";
 import { request } from "http";
+import { getName } from "country-list";
+import { PushNotificationService } from "../../../services/pushNotification.service";
+import { NotFoundError } from "../../../handlers/httpError.handler";
 
 // Helper function for logging auth events
 
@@ -32,11 +35,21 @@ export class AuthController {
       if (req?.body?.phoneNumber) {
         const { dialingCode, localNumber, countryCode, country } =
           extractPhoneDetails(req?.body?.phoneNumber);
+        const countryFromRequest = String(req?.body?.country || "").trim();
+        const requestedCountryCode =
+          /^[a-z]{2}$/i.test(countryFromRequest)
+            ? countryFromRequest.toUpperCase()
+            : "";
+        const requestedCountryName = countryFromRequest
+          ? getName(requestedCountryCode || countryFromRequest) ||
+            countryFromRequest
+          : "";
+
         payload = {
           ...req.body,
           dialingCode,
-          country,
-          countryCode,
+          country: requestedCountryName || country,
+          countryCode: requestedCountryCode || countryCode,
           localNumber,
           ip,
           userAgent,
@@ -59,6 +72,13 @@ export class AuthController {
         result = await AuthService.emailSignup(payload);
       }
 
+      PushNotificationService.sendWelcome(
+        String(result.user._id),
+        String(result.user.firstName || "").trim() || undefined,
+      ).catch((error: any) => {
+        console.error("❌ Failed to send welcome push notification:", error?.message || error);
+      });
+
       return res.status(201).json({
         success: true,
         message: "Account created successfully",
@@ -69,6 +89,8 @@ export class AuthController {
             lastName: result.user.lastName,
             email: result.user.email,
             country: result.user.country,
+            state: result.user.state,
+            city: result.user.city,
             countryCode: result.user.countryCode,
             role: result.user.role,
             motivation: result.user.motivation,
@@ -105,9 +127,9 @@ export class AuthController {
           error: "User not found",
         });
 
-        return res.status(401).json({
+        return res.status(404).json({
           success: false,
-          message: "Invalid credentials",
+          message: "Account not available",
         });
       }
 
@@ -514,8 +536,14 @@ export class AuthController {
 
     const user = await User.findOne({ email });
     if (!user) {
-      throw new Error("No account found with this email");
+      throw new NotFoundError("No account found with this email");
     }
+
+    PushNotificationService.sendPasswordResetRequested(String(user._id)).catch(
+      (error: any) => {
+        console.error("❌ Failed to send password-reset-requested push notification:", error?.message || error);
+      },
+    );
 
     let tempUser = await TempUser.findOne({ email });
 
@@ -579,6 +607,10 @@ export class AuthController {
 
     user.password = newPassword;
     await user.save();
+
+    PushNotificationService.sendPasswordChanged(String(user._id)).catch((error: any) => {
+      console.error("❌ Failed to send password-changed push notification:", error?.message || error);
+    });
 
     await TempUser.deleteOne({ email });
 

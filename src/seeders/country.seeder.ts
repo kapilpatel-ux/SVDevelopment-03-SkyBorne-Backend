@@ -205,7 +205,7 @@ const countries = [
 const seedCountries = async () => {
   try {
     const mongoUri =
-      process.env.MONGO_URI || "mongodb://localhost:27017/skyborne-production";
+      process.env.MONGO_URI || "mongodb://localhost:27017/skyborne";
 
     await mongoose.connect(mongoUri);
 

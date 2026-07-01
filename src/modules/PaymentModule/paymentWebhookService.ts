@@ -12,6 +12,8 @@ class NgeniusWebhookService {
 
     if (status === "SALE_SUCCESSFUL") {
       payment.status = "COMPLETED";
+      payment.transactionId =
+        data?.order?.id || data?.payment?.id || payment.transactionId;
 
       await Subscription.create({
         userId: payment.userId,

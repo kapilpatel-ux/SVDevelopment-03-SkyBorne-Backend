@@ -69,6 +69,14 @@ const userSchema = new Schema<IUser>(
       type: String,
       required: true,
     },
+    state: {
+      type: String,
+      trim: true,
+    },
+    city: {
+      type: String,
+      trim: true,
+    },
     localNumber: {
       type: String,
     },
@@ -131,7 +139,19 @@ const userSchema = new Schema<IUser>(
     // Step 7: Plan
     plan: {
       type: String,
-      enum: ["gold-yoga", "gold-zumba", "gold-mixed", "diamond", "platinum"],
+    },
+    pendingPlan: {
+      type: String,
+      default: null,
+    },
+    pendingBillingType: {
+      type: String,
+      enum: ["monthly", "yearly"],
+      default: null,
+    },
+    pendingEffectiveDate: {
+      type: Date,
+      default: null,
     },
 
     classCredits: {

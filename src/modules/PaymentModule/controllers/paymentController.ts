@@ -1,15 +1,16 @@
 // modules/PaymentModule/controllers/PaymentController.ts
 
 import { Request, Response } from "express";
+import mongoose from "mongoose";
 import { NgeniusService } from "../../../services/ngenius.service";
 import { StripeService } from "../services/stripe.service";
 import Payment from "../models/Payment";
 import User from "../../UserModule/models/User";
 import { PLAN_CONFIG } from "../../../config/planConfig";
 import { PlanType } from "../../UserModule/interface/userInterface";
-import { addWelcomeEmailJob } from "../../../services/queues/emailQueue";
-import { addInvoiceEmailJob } from "../../../services/queues/invoiceEmailQueue";
+import PlanModel from "../../PlanModule/models/Plan";
 import { generateInvoicePDF } from "../../../services/invoiceService";
+import { getVatRateForCountry } from "../../../utils/vat";
 import { v4 as uuidv4 } from "uuid";
 import {
   getPreferredGateway,
@@ -17,8 +18,22 @@ import {
 } from "../../../config/paymentGatewayConfig";
 import { getIO } from "../../../config/socket";
 import CancelSubscriptionModel from "../../CancelSubscriptionModule/CancelSubscriptionModel";
+import RecurringPaymentFailure from "../models/RecurringPaymentFailure";
+import { PushNotificationService } from "../../../services/pushNotification.service";
 
 type PreferedType = "stripe" | "ngenius";
+
+async function enqueueWelcomeEmail(payload: any) {
+  const { addWelcomeEmailJob } = await import("../../../services/queues/emailQueue");
+  return addWelcomeEmailJob(payload);
+}
+
+async function enqueueInvoiceEmail(payload: any, invoicePdfBase64: string) {
+  const { addInvoiceEmailJob } = await import(
+    "../../../services/queues/invoiceEmailQueue"
+  );
+  return addInvoiceEmailJob(payload, invoicePdfBase64);
+}
 
 export default class PaymentController {
   /**
@@ -27,7 +42,7 @@ export default class PaymentController {
   static initPaymentSystems() {
     NgeniusService.initRecurringPaymentCron();
     StripeService.initialize();
-    StripeService.initRecurringPaymentCron();
+    // StripeService.initRecurringPaymentCron();
   }
 
 /**
@@ -122,10 +137,51 @@ export default class PaymentController {
 
   static async createPaymentOrder(req: Request, res: Response) {
     try {
-      let { amount, currency = "USD", userId, plan, source, billingType = "monthly" } = req.body;
-      
-      const paymentSource = source === "app" ? "app" : "web";
-      const userAmount = amount;
+      let {
+        amount,
+        currency = "USD",
+        userId,
+        plan,
+        source,
+        billingType = "monthly",
+        successUrl,
+        cancelUrl,
+      } = req.body;
+
+      const normalizedSource = String(source ?? "")
+        .trim()
+        .toLowerCase();
+      const userAgent = String(req.headers["user-agent"] ?? "").toLowerCase();
+      const explicitClientSource = String(
+        req.headers["x-client-source"] ?? req.headers["x-platform"] ?? ""
+      )
+        .trim()
+        .toLowerCase();
+
+      const isAppSource =
+        normalizedSource === "app" ||
+        normalizedSource === "mobile" ||
+        explicitClientSource === "app" ||
+        explicitClientSource === "mobile" ||
+        userAgent.includes("okhttp") ||
+        userAgent.includes("reactnative") ||
+        userAgent.includes("react-native") ||
+        userAgent.includes("dalvik");
+
+      const paymentSource = isAppSource ? "app" : "web";
+      const appSuccessUrl =
+        successUrl || process.env.APP_PAYMENT_SUCCESS_URL;
+      const appCancelUrl =
+        cancelUrl || process.env.APP_PAYMENT_CANCEL_URL;
+      let userAmount = Number(amount) || 0;
+
+      if (paymentSource === "app" && (!appSuccessUrl || !appCancelUrl)) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Missing app payment redirect URLs. Set APP_PAYMENT_SUCCESS_URL and APP_PAYMENT_CANCEL_URL in environment.",
+        });
+      }
 
       // Validation
       if (!userId || !plan) {
@@ -148,6 +204,19 @@ export default class PaymentController {
         return res.status(404).json({
           success: false,
           message: "User not found",
+        });
+      }
+
+      let resolvedSubscriptionId: string | null = user.stripeSubscriptionId || null;
+
+      if (
+        user.stripeSubscriptionId &&
+        user.subscription?.status === "active"
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Active Stripe subscription already exists. Use upgrade plan API instead of create-order.",
         });
       }
 
@@ -179,7 +248,8 @@ export default class PaymentController {
           userId,
           plan,
           userAmount,
-          billingType, // Pass billing type to nGenius service
+          paymentSource,
+          billingType,
         );
       } else if (preferredGateway === "stripe") {
         // For Stripe: Create checkout session (redirect method)
@@ -192,6 +262,8 @@ export default class PaymentController {
           userAmount,
           paymentSource,
           billingType, // Pass billing type
+          paymentSource === "app" ? appSuccessUrl : undefined,
+          paymentSource === "app" ? appCancelUrl : undefined,
         );
 
         // Add paymentLink for frontend compatibility
@@ -232,6 +304,228 @@ export default class PaymentController {
     }
   }
 
+  static async upgradePlanOrder(req: Request, res: Response) {
+    try {
+      let {
+        userId,
+        plan,
+        amount,
+        currency = "USD",
+        billingType = "monthly",
+        source,
+        successUrl,
+        cancelUrl,
+      } = req.body;
+
+      if (!userId || !plan || amount === undefined || amount === null) {
+        return res.status(400).json({
+          success: false,
+          message: "userId, plan and amount are required",
+        });
+      }
+
+      if (!["monthly", "yearly"].includes(billingType)) {
+        return res.status(400).json({
+          success: false,
+          message: "billingType must be 'monthly' or 'yearly'",
+        });
+      }
+
+      const normalizedSource = String(source ?? "")
+        .trim()
+        .toLowerCase();
+      const userAgent = String(req.headers["user-agent"] ?? "").toLowerCase();
+      const explicitClientSource = String(
+        req.headers["x-client-source"] ?? req.headers["x-platform"] ?? ""
+      )
+        .trim()
+        .toLowerCase();
+
+      const isAppSource =
+        normalizedSource === "app" ||
+        normalizedSource === "mobile" ||
+        explicitClientSource === "app" ||
+        explicitClientSource === "mobile" ||
+        userAgent.includes("okhttp") ||
+        userAgent.includes("reactnative") ||
+        userAgent.includes("react-native") ||
+        userAgent.includes("dalvik");
+
+      const paymentSource = isAppSource ? "app" : "web";
+      const appSuccessUrl = successUrl || process.env.APP_PAYMENT_SUCCESS_URL;
+      const appCancelUrl = cancelUrl || process.env.APP_PAYMENT_CANCEL_URL;
+      const userAmount = Number(amount) || 0;
+
+      if (paymentSource === "app" && (!appSuccessUrl || !appCancelUrl)) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Missing app payment redirect URLs. Set APP_PAYMENT_SUCCESS_URL and APP_PAYMENT_CANCEL_URL in environment.",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const countryCode = user.country || user.countryCode;
+      let preferredGateway =
+        paymentSource === "app" ? "stripe" : getPreferredGateway(countryCode);
+
+      if (user.stripeSubscriptionId) {
+        preferredGateway = "stripe";
+      }
+
+      let previousSubscriptionId: string | null = null;
+      let deferUntil: Date | null = null;
+
+      if (preferredGateway === "stripe") {
+        previousSubscriptionId = user.stripeSubscriptionId || null;
+
+        try {
+          const customerId = await StripeService.resolveExistingCustomerId(user);
+          if (customerId) {
+            const activeSubscriptions =
+              await StripeService.getCustomerSubscriptions(customerId);
+            if (activeSubscriptions.length > 0) {
+              const matchedSubscription =
+                (previousSubscriptionId
+                  ? activeSubscriptions.find(
+                      (subscription) => subscription.id === previousSubscriptionId,
+                    )
+                  : null) || activeSubscriptions[0];
+
+              previousSubscriptionId = matchedSubscription.id;
+
+              const periodEndUnix =
+                (matchedSubscription as any).current_period_end || 0;
+              if (periodEndUnix) {
+                const periodEndMs = Number(periodEndUnix) * 1000;
+                if (periodEndMs > Date.now() + 60 * 1000) {
+                  deferUntil = new Date(periodEndMs);
+                }
+              }
+            }
+          }
+        } catch (error) {
+          console.warn(
+            "Warning: unable to resolve Stripe subscriptions for upgrade:",
+            error,
+          );
+        }
+
+        // Fallback to locally-tracked subscription endDate when Stripe data
+        // is unavailable (still only for Stripe upgrades).
+        if (!deferUntil && user.subscription?.status === "active") {
+          const localEndDate = user.subscription?.endDate;
+          if (localEndDate) {
+            const localEndMs = new Date(localEndDate).getTime();
+            if (localEndMs > Date.now() + 60 * 1000) {
+              deferUntil = new Date(localEndMs);
+            }
+          }
+        }
+
+        // If we are deferring the charge, make sure the current Stripe
+        // subscription cancels at period end (not immediately).
+        if (deferUntil && previousSubscriptionId) {
+          try {
+            await StripeService.setSubscriptionCancelAtPeriodEnd(
+              previousSubscriptionId,
+            );
+          } catch (error) {
+            console.warn(
+              "Warning: unable to set cancel_at_period_end for upgrade:",
+              error,
+            );
+          }
+        }
+      }
+
+      let paymentData: any;
+
+      if (preferredGateway === "ngenius") {
+        if (currency === "USD") {
+          const rate = await getUsdToAedRate();
+          amount = Number((amount * rate).toFixed(2));
+          currency = "AED";
+        }
+
+        paymentData = await NgeniusService.createOrder(
+          amount,
+          currency,
+          userId,
+          plan,
+          userAmount,
+          paymentSource,
+          billingType,
+        );
+      } else if (preferredGateway === "stripe") {
+        paymentData = await StripeService.createCheckoutSession(
+          userId,
+          amount,
+          currency,
+          plan,
+          userAmount,
+          paymentSource,
+          billingType,
+          paymentSource === "app" ? appSuccessUrl : undefined,
+          paymentSource === "app" ? appCancelUrl : undefined,
+          previousSubscriptionId || undefined,
+          deferUntil || undefined,
+        );
+
+        paymentData.paymentLink = paymentData.checkoutUrl;
+      } else {
+        return res.status(400).json({
+          success: false,
+          message: "No suitable payment gateway found for your country",
+        });
+      }
+
+      user.gateway = preferredGateway;
+      user.lastPaymentGateway = preferredGateway;
+      user.billingType = billingType;
+
+      if (deferUntil) {
+        user.pendingPlan = plan;
+        user.pendingBillingType = billingType;
+        user.pendingEffectiveDate = deferUntil;
+      } else {
+        user.pendingPlan = null;
+        user.pendingBillingType = null;
+        user.pendingEffectiveDate = null;
+      }
+      await user.save();
+
+      return res.status(200).json({
+        success: true,
+        gateway: preferredGateway,
+        billingType,
+        deferUntil: deferUntil ? deferUntil.toISOString() : null,
+        ...paymentData,
+        message: "Upgrade order created successfully",
+      });
+    } catch (err) {
+      console.error("❌ Upgrade plan error:", err);
+      const anyErr = err as any;
+      const message =
+        anyErr?.message ||
+        anyErr?.raw?.message ||
+        anyErr?.error?.message ||
+        "Failed to upgrade plan";
+      return res.status(500).json({
+        success: false,
+        message,
+        error: message,
+      });
+    }
+  }
+
   /**
    * Enhanced verifyStripeCheckout for mobile
    */
@@ -249,6 +543,40 @@ export default class PaymentController {
       // Get session details from Stripe
       const session = await StripeService.getCheckoutSession(sessionId);
 
+      const deferUntilRaw = (session.metadata as any)?.deferUntil;
+      const deferUntilMs = deferUntilRaw
+        ? Date.parse(String(deferUntilRaw))
+        : NaN;
+      const isDeferredUpgrade =
+        Number.isFinite(deferUntilMs) && deferUntilMs > Date.now() + 60 * 1000;
+
+      if (isDeferredUpgrade) {
+        const metadata = session.metadata as any;
+        const pendingPlan = String(metadata?.plan || "").trim() || null;
+        const pendingBillingType =
+          metadata?.billingType === "yearly" ? "yearly" : "monthly";
+        const pendingEffectiveDate = deferUntilRaw
+          ? new Date(String(deferUntilRaw))
+          : null;
+
+        if (metadata?.userId) {
+          await User.findByIdAndUpdate(metadata.userId, {
+            pendingPlan,
+            pendingBillingType,
+            pendingEffectiveDate,
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          message:
+            "Upgrade scheduled. Payment will be collected after current subscription ends.",
+          status: "PENDING",
+          gateway: "stripe",
+          deferUntil: deferUntilRaw || null,
+        });
+      }
+
       if (session.payment_status === "paid") {
         // Get or create payment record
         let payment = await Payment.findOne({
@@ -264,7 +592,8 @@ export default class PaymentController {
             reference: sessionId,
             amount: metadata?.userAmount || (session.amount_total || 0) / 100,
             localAmount: (session.amount_total || 0) / 100,
-            currency: session.currency?.toUpperCase() || "USD",
+            localCurrency: session.currency?.toUpperCase() || "USD",
+            currency: String(metadata?.originalCurrency || "USD").toUpperCase(),
             plan: metadata?.plan,
             status: "COMPLETED",
             gateway: "stripe",
@@ -381,7 +710,8 @@ export default class PaymentController {
   }
   static async me(req: Request, res: Response) {
     try {
-      const userId = req?.user?.id;
+      const userId =
+        (req as any)?.user?.id || (req as any)?.user?._id?.toString?.();
 
       if (!userId) {
         return res.status(401).json({
@@ -409,6 +739,354 @@ export default class PaymentController {
         message: error.message || "Error fetching user profile",
       });
     }
+  }
+
+  static async getCardDetails(req: Request, res: Response) {
+    try {
+      const userId =
+        (req as any)?.user?.id || (req as any)?.user?._id?.toString?.();
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const cardData = await StripeService.getDefaultCardDetails(user);
+      return res.status(200).json({
+        success: true,
+        data: cardData,
+      });
+    } catch (error: any) {
+      console.error("❌ [getCardDetails] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to fetch card details",
+      });
+    }
+  }
+
+  static async createCardSetupIntent(req: Request, res: Response) {
+    try {
+      const userId =
+        (req as any)?.user?.id || (req as any)?.user?._id?.toString?.();
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const setupIntent = await StripeService.createCardSetupIntent(user);
+      return res.status(200).json({
+        success: true,
+        data: setupIntent,
+      });
+    } catch (error: any) {
+      console.error("❌ [createCardSetupIntent] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to create setup intent",
+      });
+    }
+  }
+
+  static async updateCardDetails(req: Request, res: Response) {
+    try {
+      const userId =
+        (req as any)?.user?.id || (req as any)?.user?._id?.toString?.();
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const paymentMethodId = String(req.body?.paymentMethodId || "").trim();
+      if (!paymentMethodId) {
+        return res.status(400).json({
+          success: false,
+          message: "paymentMethodId is required",
+        });
+      }
+
+      const billingDetails = {
+        name: req.body?.billingDetails?.name || "",
+        email: req.body?.billingDetails?.email || "",
+        phone: req.body?.billingDetails?.phone || "",
+        address: {
+          line1: req.body?.billingDetails?.address?.line1 || "",
+          line2: req.body?.billingDetails?.address?.line2 || "",
+          city: req.body?.billingDetails?.address?.city || "",
+          state: req.body?.billingDetails?.address?.state || "",
+          postal_code: req.body?.billingDetails?.address?.postal_code || "",
+          country: req.body?.billingDetails?.address?.country || "",
+        },
+      };
+
+      const updated = await StripeService.setDefaultPaymentMethodForUser(
+        user,
+        paymentMethodId,
+        billingDetails,
+      );
+
+      await RecurringPaymentFailure.deleteMany({
+        $or: [{ userId: user._id }, { email: String(user.email || "").toLowerCase() }],
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "Card details updated successfully",
+        data: updated,
+      });
+    } catch (error: any) {
+      console.error("❌ [updateCardDetails] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to update card details",
+      });
+    }
+  }
+
+  static async createCardPortalSession(req: Request, res: Response) {
+    try {
+      const userId =
+        (req as any)?.user?.id || (req as any)?.user?._id?.toString?.();
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message: "User not authenticated",
+        });
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found",
+        });
+      }
+
+      const requestedReturnUrl = String(req.body?.returnUrl || "").trim() || undefined;
+      const clientSourceHeader = String(req.headers["x-client-source"] || "").toLowerCase();
+      const isAppClient = clientSourceHeader === "app";
+
+      const defaultAppReturnUrlBase = String(process.env.API_BASE_URL || "").trim();
+      const defaultWebReturnUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+      const defaultAppReturnUrl = defaultAppReturnUrlBase
+        ? `${defaultAppReturnUrlBase}/payment/stripe-portal-return?dest=app`
+        : undefined;
+
+      const computedReturnUrl =
+        requestedReturnUrl || (isAppClient ? defaultAppReturnUrl : defaultWebReturnUrl);
+
+      const session = await StripeService.createCardUpdatePortalSession(user, computedReturnUrl);
+      return res.status(200).json({
+        success: true,
+        data: session,
+      });
+    } catch (error: any) {
+      console.error("❌ [createCardPortalSession] Error:", error);
+      return res.status(500).json({
+        success: false,
+        message: error?.message || "Failed to create Stripe card update session",
+      });
+    }
+  }
+
+  static async stripePortalReturn(req: Request, res: Response) {
+    const dest = String(req.query?.dest || "web").toLowerCase();
+    const fallbackWebUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+
+    if (dest !== "app") {
+      return res.redirect(302, fallbackWebUrl);
+    }
+
+    const appScheme = String(process.env.APP_DEEP_LINK_SCHEME || "skybornedrop").trim();
+    const billingPortalHost = String(
+      process.env.APP_BILLING_PORTAL_HOST || "billing-portal",
+    ).trim();
+    const androidPackage = String(process.env.APP_ANDROID_PACKAGE || "com.skyborne").trim();
+
+    const deepLink = `${appScheme}://${billingPortalHost}?status=complete`;
+    const fallbackUrl = fallbackWebUrl;
+    const androidIntentLink =
+      `intent://${billingPortalHost}?status=complete` +
+      `#Intent;scheme=${encodeURIComponent(appScheme)}` +
+      `;package=${encodeURIComponent(androidPackage)}` +
+      `;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}` +
+      ";end";
+
+    // NOTE: Many mobile browsers block auto-opening custom schemes without a user gesture.
+    // So we attempt once, but keep the user on this page with a clear "Open app" button.
+    res.status(200);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Returning to Skyborne…</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;padding:24px;background:#fff;color:#111}
+      .box{max-width:520px;margin:0 auto}
+      .muted{color:#555;font-size:14px;line-height:1.4}
+      .btn{display:inline-block;background:#B95E82;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600}
+      .btnSecondary{display:inline-block;margin-top:12px;color:#B95E82;text-decoration:none}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Returning to Skyborne…</h2>
+      <p class="muted">Tap the button below to go back to the app.</p>
+      <p><a id="openBtn" class="btn" href="${deepLink}" rel="nofollow">Open Skyborne App</a></p>
+      <p><a class="btnSecondary" href="${fallbackUrl}">Continue on web</a></p>
+    </div>
+    <script>
+      (function () {
+        var deepLink = ${JSON.stringify(deepLink)};
+        var androidIntentLink = ${JSON.stringify(androidIntentLink)};
+        var ua = String(navigator.userAgent || '').toLowerCase();
+        var isAndroid = ua.indexOf('android') !== -1;
+        var isIOS = /iphone|ipad|ipod/.test(ua);
+
+        // Improve Android reliability: Chrome sometimes ignores custom schemes,
+        // but will honor intent:// links that target the app package.
+        try {
+          if (isAndroid) {
+            var btn = document.getElementById('openBtn');
+            if (btn) btn.setAttribute('href', androidIntentLink);
+          }
+        } catch (e) {}
+
+        // Attempt an automatic open. If the browser blocks it, the button remains.
+        // We delay slightly so the page renders (and Safari/Chrome are less likely to drop navigation).
+        try {
+          setTimeout(function () {
+            if (isAndroid) {
+              window.location.replace(androidIntentLink);
+              return;
+            }
+            // iOS + others: try the scheme directly
+            window.location.replace(deepLink);
+          }, 150);
+        } catch (e) {}
+      })();
+    </script>
+  </body>
+</html>`);
+  }
+
+  static async stripeCheckoutReturn(req: Request, res: Response) {
+    const dest = String(req.query?.dest || "web").toLowerCase();
+    const status = String(req.query?.status || "success").toLowerCase();
+    const sessionId =
+      String(req.query?.session_id || req.query?.sessionId || "").trim() || undefined;
+
+    const fallbackWebUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+
+    if (dest !== "app") {
+      return res.redirect(302, fallbackWebUrl);
+    }
+
+    const appScheme = String(process.env.APP_DEEP_LINK_SCHEME || "skybornedrop").trim();
+    const androidPackage = String(process.env.APP_ANDROID_PACKAGE || "com.skyborne").trim();
+
+    const appSuccessTemplate =
+      String(process.env.APP_PAYMENT_SUCCESS_URL || "").trim() ||
+      `${appScheme}://payment-processing?status=success&sessionId={CHECKOUT_SESSION_ID}`;
+    const appCancelTemplate =
+      String(process.env.APP_PAYMENT_CANCEL_URL || "").trim() ||
+      `${appScheme}://payment-processing?status=cancelled`;
+
+    const deepLinkTemplate = status === "cancel" ? appCancelTemplate : appSuccessTemplate;
+    const deepLink = sessionId
+      ? deepLinkTemplate.replace(/\{CHECKOUT_SESSION_ID\}/g, encodeURIComponent(sessionId))
+      : deepLinkTemplate;
+
+    const fallbackUrl = fallbackWebUrl;
+    const deepLinkWithoutScheme = deepLink.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+    const androidIntentLink =
+      `intent://${deepLinkWithoutScheme}` +
+      `#Intent;scheme=${encodeURIComponent(appScheme)}` +
+      `;package=${encodeURIComponent(androidPackage)}` +
+      `;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)}` +
+      ";end";
+
+    res.status(200);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Returning to Skyborne…</title>
+    <style>
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;margin:0;padding:24px;background:#fff;color:#111}
+      .box{max-width:520px;margin:0 auto}
+      .muted{color:#555;font-size:14px;line-height:1.4}
+      .btn{display:inline-block;background:#B95E82;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600}
+      .btnSecondary{display:inline-block;margin-top:12px;color:#B95E82;text-decoration:none}
+    </style>
+  </head>
+  <body>
+    <div class="box">
+      <h2>Returning to Skyborne…</h2>
+      <p class="muted">Tap the button below to go back to the app.</p>
+      <p><a id="openBtn" class="btn" href="${deepLink}" rel="nofollow">Open Skyborne App</a></p>
+      <p><a class="btnSecondary" href="${fallbackUrl}">Continue on web</a></p>
+    </div>
+    <script>
+      (function () {
+        var deepLink = ${JSON.stringify(deepLink)};
+        var androidIntentLink = ${JSON.stringify(androidIntentLink)};
+        var ua = String(navigator.userAgent || '').toLowerCase();
+        var isAndroid = ua.indexOf('android') !== -1;
+
+        try {
+          if (isAndroid) {
+            var btn = document.getElementById('openBtn');
+            if (btn) btn.setAttribute('href', androidIntentLink);
+          }
+        } catch (e) {}
+
+        try {
+          setTimeout(function () {
+            if (isAndroid) {
+              window.location.replace(androidIntentLink);
+              return;
+            }
+            window.location.replace(deepLink);
+          }, 150);
+        } catch (e) {}
+      })();
+    </script>
+  </body>
+</html>`);
   }
 
   /**
@@ -440,18 +1118,27 @@ export default class PaymentController {
         });
       }
 
-      // Check if already verified
-      if (payment.status === "COMPLETED" || payment.subscriptionActivated) {
+      // Already fully processed
+      if (payment.subscriptionActivated) {
+        const user = await User.findById(payment.userId).select(
+          "onboardingCompleted",
+        );
         return res.status(200).json({
           success: true,
-          message: "✅ Payment already verified",
-          status: "SUCCESS",
+          message: "✅ Payment already processed",
+          status: payment.status,
           orderRef: payment.orderRef,
           amount: payment.amount,
           currency: payment.currency,
           plan: payment.plan,
           gateway: "ngenius",
+          user,
         });
+      }
+
+      // Completed payment exists but activation did not happen yet
+      if (payment.status === "COMPLETED") {
+        return this.activateSubscription(payment, true, res, next);
       }
 
       // Fetch current status from nGenius
@@ -506,14 +1193,13 @@ export default class PaymentController {
         { new: true },
       );
 
-      // For mobile, return immediately with status
-      // Subscription will be activated by a separate cron job or webhook
+      if (paymentStatus === "COMPLETED") {
+        return this.activateSubscription(payment, true, res, next);
+      }
+
       return res.status(200).json({
-        success: paymentStatus === "COMPLETED",
-        message:
-          paymentStatus === "COMPLETED"
-            ? "✅ Payment verified!"
-            : `Payment ${paymentStatus}`,
+        success: false,
+        message: `Payment ${paymentStatus}`,
         status: paymentStatus,
         orderRef: payment?.orderRef,
         amount: payment?.amount,
@@ -562,6 +1248,12 @@ export default class PaymentController {
       // ✅ FIX: Check if subscription was already activated (subscription status field)
       // This prevents double activation even if payment is marked COMPLETED
       if (payment.subscriptionActivated) {
+        const user = await User.findById(payment.userId).select(
+          "onboardingCompleted",
+        );
+        if (payment.status === "COMPLETED" && !user?.onboardingCompleted) {
+          return this.activateSubscription(payment, true, res, next);
+        }
         return res.status(200).json({
           success: true,
           message: "✅ Payment already processed",
@@ -569,35 +1261,74 @@ export default class PaymentController {
           orderRef: payment.orderRef,
           status: payment.status,
           plan: payment.plan,
+          user,
         });
       }
 
       // Retrieve the session from Stripe
       const session = await StripeService.getCheckoutSession(paymentIntentId);
 
+      const deferUntilRaw = (session.metadata as any)?.deferUntil;
+      const deferUntilMs = deferUntilRaw
+        ? Date.parse(String(deferUntilRaw))
+        : NaN;
+      const isDeferredUpgrade =
+        Number.isFinite(deferUntilMs) && deferUntilMs > Date.now() + 60 * 1000;
+
       let paymentStatus = "PENDING";
 
-      if (session.payment_status === "paid") {
-        paymentStatus = "COMPLETED";
-      } else if (session.payment_status === "unpaid") {
-        paymentStatus = "FAILED";
+      if (!isDeferredUpgrade) {
+        if (
+          session.payment_status === "paid" ||
+          session.payment_status === "no_payment_required"
+        ) {
+          paymentStatus = "COMPLETED";
+        } else if (session.payment_status === "unpaid") {
+          paymentStatus = "FAILED";
+        }
       }
 
       const subscriptionId = session.subscription as string | null;
+      const transactionId =
+        typeof session.payment_intent === "string"
+          ? session.payment_intent
+          : session.payment_intent?.id || null;
 
-      // ✅ FIX: Mark that subscription is about to be activated
-      // This flag prevents activateSubscription from being called twice
+      // Update payment state first; subscriptionActivated is marked only after successful activation
       payment = await Payment.findOneAndUpdate(
         { _id: payment._id },
         {
           subscriptionId: subscriptionId || payment.subscriptionId,
+          transactionId: transactionId || payment.transactionId,
+          paymentIntentId: transactionId || payment.paymentIntentId,
           status: paymentStatus,
-          subscriptionActivated: true, // ✅ NEW: Flag set BEFORE activation
           gatewayResponse: session,
-          verifiedAt: new Date(),
+          ...(isDeferredUpgrade ? {} : { verifiedAt: new Date() }),
         },
         { new: true },
       );
+
+      if (!payment) {
+        return res.status(404).json({
+          success: false,
+          error: "Payment record not found",
+        });
+      }
+
+      if (isDeferredUpgrade) {
+        return res.status(200).json({
+          success: true,
+          message:
+            "Upgrade scheduled. Payment will be collected after current subscription ends.",
+          status: "PENDING",
+          orderRef: payment.orderRef,
+          amount: payment.amount,
+          currency: payment.currency,
+          plan: payment.plan,
+          gateway: "stripe",
+          deferUntil: deferUntilRaw || null,
+        });
+      }
 
       return this.activateSubscription(
         payment,
@@ -631,17 +1362,27 @@ export default class PaymentController {
     next: any,
   ) {
     try {
+      let user: any = null;
       if (isSuccessful) {
-        const user = await User.findById(payment?.userId);
+        user = await User.findById(payment?.userId);
 
         if (!user) {
           console.error("❌ User not found:", payment?.userId);
         } else {
-          const plan = payment?.plan as PlanType;
-          const billingType = payment?.billingType || "monthly";
-          
-          // Get base monthly credits
-          let newCredits = PLAN_CONFIG[plan];
+          const plan = String(payment?.plan || "").trim();
+          const billingType =
+            payment?.billingType === "yearly" ? "yearly" : "monthly";
+
+          if (!plan) {
+            throw new Error("Plan is missing in payment record");
+          }
+
+          const baseCredits = await resolvePlanCredits(plan);
+          if (!baseCredits) {
+            throw new Error(`Unable to resolve credits for plan: ${plan}`);
+          }
+
+          let newCredits = { ...baseCredits };
 
           // ✅ If yearly billing, multiply credits by 12
           if (billingType === "yearly") {
@@ -655,12 +1396,17 @@ export default class PaymentController {
           // Check if user has an existing active plan
           const hasExistingPlan =
             user.plan && user.subscription?.status === "active";
+          const previousPlan = String(user.plan || "").trim();
 
           // Update classCredits
           if (hasExistingPlan) {
             user.classCredits = addCredits(user.classCredits, newCredits);
           } else {
-            user.classCredits = newCredits;
+            user.classCredits = {
+              yoga: newCredits.yoga || 0,
+              zumba: newCredits.zumba || 0,
+              specialty: newCredits.specialty || 0,
+            };
           }
 
           user.overAllclassCredits = addCredits(
@@ -697,9 +1443,34 @@ export default class PaymentController {
 
           // Update plan
           user.plan = plan;
+          user.pendingPlan = null;
+          user.pendingBillingType = null;
+          user.pendingEffectiveDate = null;
           user.onboardingCompleted = true;
 
           await user.save();
+
+          PushNotificationService.sendPaymentStatus(String(user._id), {
+            success: true,
+            amount: Number(payment?.amount || 0),
+            currency: String(payment?.currency || ""),
+            plan,
+            invoiceId: String(payment?.invoiceId || ""),
+          }).catch((error: any) => {
+            console.error("❌ Failed to send payment-success push notification:", error?.message || error);
+          });
+
+          if (hasExistingPlan && previousPlan && previousPlan !== plan) {
+            PushNotificationService.sendPlanChanged(String(user._id), previousPlan, plan).catch(
+              (error: any) => {
+                console.error("❌ Failed to send plan-changed push notification:", error?.message || error);
+              },
+            );
+          }
+
+          if (payment) {
+            payment.subscriptionActivated = true;
+          }
 
           if (payment?.source === "app") {
             await this.notifyPaymentSuccess(user._id.toString(), payment);
@@ -713,23 +1484,26 @@ export default class PaymentController {
           try {
             const subscriptionEndDate = new Date(Date.now() + subscriptionDuration);
             
+            const vatRate = getVatRateForCountry(user.country, user.countryCode);
+
             const invoicePDF = await generateInvoicePDF({
               invoiceId,
               orderRef: payment!.orderRef,
               userId: user._id.toString(),
               userEmail: user.email,
               userName: user.firstName + " " + user.lastName,
-              plan: plan.charAt(0).toUpperCase() + plan.slice(1),
+              plan: toDisplayPlanName(plan),
               amount: payment!.amount,
-              currency: payment!.currency || "USD",
+              currency: "USD",
               date: new Date(),
               subscriptionEndDate: subscriptionEndDate,
               paymentMethod: `${payment.gateway.toUpperCase()} Payment Gateway`,
+              taxRate: vatRate,
             });
 
             const invoicePDFBase64 = invoicePDF.toString("base64");
 
-            addInvoiceEmailJob(
+            enqueueInvoiceEmail(
               {
                 invoiceId,
                 orderRef: payment?.orderRef as string,
@@ -738,10 +1512,11 @@ export default class PaymentController {
                 userName: user.firstName + " " + user.lastName,
                 plan: plan,
                 amount: payment!.amount,
-                currency: payment!.currency || "USD",
+                currency: "USD",
                 date: new Date(),
                 subscriptionEndDate: subscriptionEndDate,
                 paymentMethod: `${payment.gateway.toUpperCase()} Payment Gateway`,
+                taxRate: vatRate,
               },
               invoicePDFBase64,
             ).catch((err) =>
@@ -754,7 +1529,11 @@ export default class PaymentController {
             console.error("❌ Error generating/sending invoice:", invoiceErr);
           }
 
-          addWelcomeEmailJob({
+          if (payment?.isModified?.()) {
+            await payment.save();
+          }
+
+          enqueueWelcomeEmail({
             userId: user._id.toString(),
             email: user.email,
             firstName: user.firstName,
@@ -769,24 +1548,44 @@ export default class PaymentController {
         ? 365 * 24 * 60 * 60 * 1000
         : 30 * 24 * 60 * 60 * 1000;
 
-      return res.status(isSuccessful ? 200 : 400).json({
+      const responsePayload = {
         success: isSuccessful,
         gateway: payment?.gateway,
         orderRef: payment?.orderRef,
         reference: payment?.reference,
+        subscriptionId: payment?.subscriptionId,
+        transactionId: payment?.transactionId,
         amount: payment?.amount,
         currency: payment?.currency,
         status: payment?.status,
         plan: payment?.plan,
         billingType: payment?.billingType,
+        user: user
+          ? { onboardingCompleted: Boolean(user.onboardingCompleted) }
+          : undefined,
         subscriptionEndDate: new Date(Date.now() + subscriptionDuration),
         message: isSuccessful
           ? `✅ Payment successful! Subscription activated. ${payment?.billingType === "yearly" ? "Annual" : "Monthly"} billing will begin.`
           : `❌ Payment ${payment?.status}`,
-      });
+      };
+
+      if (!res) {
+        return responsePayload;
+      }
+
+      return res.status(isSuccessful ? 200 : 400).json(responsePayload);
     } catch (error) {
       console.error("❌ Subscription Activation Error:", error);
-      next(error);
+      if (!res) {
+        throw error;
+      }
+      if (typeof next === "function") {
+        return next(error);
+      }
+      return res.status(500).json({
+        success: false,
+        error: "Subscription activation failed",
+      });
     }
   }
 
@@ -904,7 +1703,9 @@ export default class PaymentController {
         });
       }
 
-      const payments = await Payment.find({ userId })
+      const payments = await Payment.find({ 
+        userId,
+        status: "COMPLETED" })
         .sort({ createdAt: -1 })
         .lean();
 
@@ -926,10 +1727,13 @@ export default class PaymentController {
           amount: payment.amount,
           localAmount: payment.localAmount,
           currency: payment.currency,
+          localCurrency: (payment as any).localCurrency,
           plan: payment.plan,
           status: payment.status,
           gateway: payment.gateway,
           invoiceId: payment.invoiceId,
+          subscriptionId: payment.subscriptionId,
+          transactionId: payment.transactionId,
           createdAt: payment.createdAt,
           updatedAt: payment.updatedAt,
           paymentMethod: payment.reference
@@ -1035,7 +1839,7 @@ export default class PaymentController {
       const limitNum = parseInt(limit as string) || 10;
       const skip = (pageNum - 1) * limitNum;
 
-      const query: any = { status: "COMPLETED" };
+      const matchQuery: any = {};
 
       // Filter by status
       const validStatuses = ["COMPLETED", "PENDING", "FAILED", "CANCELLED"];
@@ -1044,7 +1848,10 @@ export default class PaymentController {
         status !== "all" &&
         validStatuses.includes(String(status).toUpperCase())
       ) {
-        query.status = String(status).toUpperCase();
+        matchQuery.status = String(status).toUpperCase();
+      } else {
+        // Preserve existing default behavior
+        matchQuery.status = "COMPLETED";
       }
 
       // Filter by gateway
@@ -1054,13 +1861,16 @@ export default class PaymentController {
         gateway !== "all" &&
         validGateways.includes(String(gateway).toLowerCase())
       ) {
-        query.gateway = String(gateway).toLowerCase();
+        matchQuery.gateway = String(gateway).toLowerCase();
       }
+
+      const escapeRegex = (value: string) =>
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
       // Build aggregation pipeline
       const pipeline: any[] = [
         // Match payment filters (status, gateway)
-        { $match: { status: "COMPLETED" } },
+        { $match: matchQuery },
         // Lookup user data
         {
           $lookup: {
@@ -1070,8 +1880,8 @@ export default class PaymentController {
             as: "user",
           },
         },
-        // Unwind user array
-        { $unwind: "$user" },
+        // Keep payments even when user record is missing
+        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
       ];
 
       // Filter by country if provided
@@ -1080,6 +1890,48 @@ export default class PaymentController {
         pipeline.push({
           $match: {
             "user.countryCode": countryCode,
+          },
+        });
+      }
+
+      // Apply search at DB level BEFORE pagination
+      if (search && String(search).trim()) {
+        const searchRegex = escapeRegex(String(search).trim());
+        pipeline.push({
+          $match: {
+            $or: [
+              { "user.email": { $regex: searchRegex, $options: "i" } },
+              { orderRef: { $regex: searchRegex, $options: "i" } },
+              { reference: { $regex: searchRegex, $options: "i" } },
+              {
+                $expr: {
+                  $regexMatch: {
+                    input: {
+                      $trim: {
+                        input: {
+                          $concat: [
+                            { $ifNull: ["$user.firstName", ""] },
+                            " ",
+                            { $ifNull: ["$user.lastName", ""] },
+                          ],
+                        },
+                      },
+                    },
+                    regex: searchRegex,
+                    options: "i",
+                  },
+                },
+              },
+              {
+                $expr: {
+                  $regexMatch: {
+                    input: { $toString: "$_id" },
+                    regex: searchRegex,
+                    options: "i",
+                  },
+                },
+              },
+            ],
           },
         });
       }
@@ -1098,30 +1950,10 @@ export default class PaymentController {
       const result = await Payment.aggregate(pipeline as any);
 
       const totalCount = result[0]?.metadata[0]?.total || 0;
-      let payments = result[0]?.data || [];
-
-      // Apply search filter (client-side after population)
-      let filteredPayments = payments;
-      if (search) {
-        const searchLower = String(search).toLowerCase();
-        filteredPayments = payments.filter((payment: any) => {
-          const user = payment.user;
-          const username = user
-            ? `${user.firstName} ${user.lastName || ""}`.trim()
-            : "Unknown";
-
-          return (
-            user?.email?.toLowerCase().includes(searchLower) ||
-            username.toLowerCase().includes(searchLower) ||
-            payment._id?.toString().includes(searchLower) ||
-            payment.orderRef?.toLowerCase().includes(searchLower) ||
-            payment.reference?.toLowerCase().includes(searchLower)
-          );
-        });
-      }
+      const payments = result[0]?.data || [];
 
       // Format response
-      const formattedPayments = filteredPayments.map((payment: any) => {
+      const formattedPayments = payments.map((payment: any) => {
         const user = payment.user;
         const username = user
           ? `${user.firstName} ${user.lastName || ""}`.trim()
@@ -1129,9 +1961,10 @@ export default class PaymentController {
 
         return {
           _id: payment._id,
-          userId: user._id,
+          userId: user?._id || payment.userId || null,
           username,
           email: user?.email || "N/A",
+          phoneNumber: user?.phoneNumber || "N/A",
           stripeSubscriptionId: user?.stripeSubscriptionId || "N/A",
           country: user?.country || "N/A",
           orderRef: payment.orderRef,
@@ -1143,6 +1976,9 @@ export default class PaymentController {
           gateway: payment.gateway,
           status: payment.status,
           invoiceId: payment.invoiceId,
+          verifiedAt: payment.verifiedAt,
+          subscriptionId: payment.subscriptionId,
+          transactionId: payment.transactionId,
           createdAt: payment.createdAt,
           updatedAt: payment.updatedAt,
           paymentMethod: payment.reference
@@ -1155,7 +1991,7 @@ export default class PaymentController {
         success: true,
         payments: formattedPayments,
         total: totalCount,
-        filteredCount: filteredPayments.length,
+        filteredCount: totalCount,
         page: pageNum,
         limit: limitNum,
         totalPages: Math.ceil(totalCount / limitNum),
@@ -1177,17 +2013,163 @@ export default class PaymentController {
   }
 
   /**
+   * Get all recurring payment failures (Admin)
+   */
+  static async getAllRecurringPaymentFailures(req: Request, res: Response) {
+    try {
+      const { search, status, page = 1, limit = 10 } = req.query;
+
+      const pageNum = Math.max(1, parseInt(String(page), 10) || 1);
+      const limitNum = Math.max(1, parseInt(String(limit), 10) || 10);
+      const skip = (pageNum - 1) * limitNum;
+
+      const matchQuery: any = {};
+      const andConditions: any[] = [];
+      const validStatuses = ["processing", "cancelled"];
+
+      if (status && status !== "all") {
+        const normalizedStatus = String(status).trim().toLowerCase();
+        if (!validStatuses.includes(normalizedStatus)) {
+          return res.status(400).json({
+            success: false,
+            message: `Invalid status. Allowed: ${validStatuses.join(", ")}, all`,
+          });
+        }
+        if (normalizedStatus === "processing") {
+          andConditions.push({
+            $or: [{ status: "processing" }, { status: { $exists: false } }],
+          });
+        } else {
+          andConditions.push({ status: "cancelled" });
+        }
+      }
+
+      if (search && String(search).trim()) {
+        const escapedSearch = String(search)
+          .trim()
+          .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        andConditions.push({
+          $or: [
+            { email: { $regex: escapedSearch, $options: "i" } },
+            { phoneNumber: { $regex: escapedSearch, $options: "i" } },
+            { subscriptionId: { $regex: escapedSearch, $options: "i" } },
+            { invoiceId: { $regex: escapedSearch, $options: "i" } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $toString: "$_id" },
+                  regex: escapedSearch,
+                  options: "i",
+                },
+              },
+            },
+          ],
+        });
+      }
+
+      if (andConditions.length === 1) {
+        Object.assign(matchQuery, andConditions[0]);
+      } else if (andConditions.length > 1) {
+        matchQuery.$and = andConditions;
+      }
+
+      const [totalCount, failures] = await Promise.all([
+        RecurringPaymentFailure.countDocuments(matchQuery),
+        RecurringPaymentFailure.find(matchQuery)
+          .sort({ failedAt: -1, createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .populate({
+            path: "userId",
+            select: "firstName lastName email phoneNumber dialingCode localNumber",
+          })
+          .lean(),
+      ]);
+
+      const formattedFailures = failures.map((entry: any) => {
+        const user = entry.userId && typeof entry.userId === "object" ? entry.userId : null;
+        const fallbackPhone = String(
+          user?.phoneNumber || `${user?.dialingCode || ""}${user?.localNumber || ""}`,
+        )
+          .trim()
+          .replace(/\s+/g, "");
+
+        return {
+          _id: entry._id,
+          userId: user?._id || entry.userId || null,
+          fullName: user
+            ? `${user.firstName || ""} ${user.lastName || ""}`.trim() || null
+            : null,
+          email: entry.email || user?.email || null,
+          phoneNumber: entry.phoneNumber || fallbackPhone || null,
+          subscriptionId: entry.subscriptionId || null,
+          invoiceId: entry.invoiceId || null,
+          status: entry.status || "processing",
+          failedAt: entry.failedAt,
+          createdAt: entry.createdAt,
+          updatedAt: entry.updatedAt,
+        };
+      });
+
+      return res.status(200).json({
+        success: true,
+        failures: formattedFailures,
+        total: totalCount,
+        filteredCount: totalCount,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(totalCount / limitNum),
+        currentFilters: {
+          status: status || "all",
+          search: search || "",
+        },
+      });
+    } catch (error) {
+      console.error("❌ Error fetching recurring payment failures:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to fetch recurring payment failures",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  /**
    * Export payments as CSV (Admin only)
    */
   static async exportPaymentsCSV(req: Request, res: Response) {
     try {
-      const { search, status, country } = req.query;
+      const { search, status, gateway, country } = req.query;
 
-      // Build aggregation pipeline
+      const matchQuery: any = {};
+
+      // Match the same filter behavior as getAllPayments
+      const validStatuses = ["COMPLETED", "PENDING", "FAILED", "CANCELLED"];
+      if (
+        status &&
+        status !== "all" &&
+        validStatuses.includes(String(status).toUpperCase())
+      ) {
+        matchQuery.status = String(status).toUpperCase();
+      } else {
+        matchQuery.status = "COMPLETED";
+      }
+
+      const validGateways = ["ngenius", "stripe"];
+      if (
+        gateway &&
+        gateway !== "all" &&
+        validGateways.includes(String(gateway).toLowerCase())
+      ) {
+        matchQuery.gateway = String(gateway).toLowerCase();
+      }
+
+      const escapeRegex = (value: string) =>
+        value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
       const pipeline: any[] = [
-        // Match payment filters (status)
-        { $match: { status: "COMPLETED" } },
-        // Lookup user data
+        { $match: matchQuery },
         {
           $lookup: {
             from: "users",
@@ -1196,11 +2178,9 @@ export default class PaymentController {
             as: "user",
           },
         },
-        // Unwind user array
-        { $unwind: "$user" },
+        { $unwind: { path: "$user", preserveNullAndEmptyArrays: true } },
       ];
 
-      // Filter by country if provided
       if (country && country !== "all") {
         const countryCode = String(country).toUpperCase();
         pipeline.push({
@@ -1210,36 +2190,60 @@ export default class PaymentController {
         });
       }
 
-      // Add sorting
-      pipeline.push({ $sort: { createdAt: -1 } });
-
-      const payments = await Payment.aggregate(pipeline as any);
-
-      // Apply search filter (client-side after population)
-      let filteredPayments = payments;
-      if (search) {
-        const searchLower = String(search).toLowerCase();
-        filteredPayments = payments.filter((payment: any) => {
-          const user = payment.user;
-          const username = user
-            ? `${user.firstName} ${user.lastName || ""}`.trim()
-            : "Unknown";
-
-          return (
-            user?.email?.toLowerCase().includes(searchLower) ||
-            username.toLowerCase().includes(searchLower) ||
-            payment._id?.toString().includes(searchLower) ||
-            payment.orderRef?.toLowerCase().includes(searchLower) ||
-            payment.reference?.toLowerCase().includes(searchLower)
-          );
+      if (search && String(search).trim()) {
+        const searchRegex = escapeRegex(String(search).trim());
+        pipeline.push({
+          $match: {
+            $or: [
+              { "user.email": { $regex: searchRegex, $options: "i" } },
+              { orderRef: { $regex: searchRegex, $options: "i" } },
+              { reference: { $regex: searchRegex, $options: "i" } },
+              {
+                $expr: {
+                  $regexMatch: {
+                    input: {
+                      $trim: {
+                        input: {
+                          $concat: [
+                            { $ifNull: ["$user.firstName", ""] },
+                            " ",
+                            { $ifNull: ["$user.lastName", ""] },
+                          ],
+                        },
+                      },
+                    },
+                    regex: searchRegex,
+                    options: "i",
+                  },
+                },
+              },
+              {
+                $expr: {
+                  $regexMatch: {
+                    input: { $toString: "$_id" },
+                    regex: searchRegex,
+                    options: "i",
+                  },
+                },
+              },
+            ],
+          },
         });
       }
 
+      pipeline.push({ $sort: { createdAt: -1 } });
+
+      const filteredPayments = await Payment.aggregate(pipeline as any);
+
       // Generate CSV
       const headers = [
+        "Subscription Id",
+        "Transaction Id",
         "Order Reference",
         "Username",
         "Email",
+        "Phone Number",
+        "Verified At",
         "Date",
         "Plan",
         "Amount",
@@ -1275,9 +2279,13 @@ export default class PaymentController {
         };
 
         return [
+          payment.subscriptionId || user?.stripeSubscriptionId || "N/A",
+          payment.transactionId || "N/A",
           payment.orderRef || "N/A",
           username,
           user?.email || "N/A",
+          user?.phoneNumber || "N/A",
+          payment.verifiedAt ? formatDate(payment.verifiedAt) : "N/A",
           formatDate(payment.createdAt),
           formatPlanName(payment.plan),
           payment.amount?.toString() || "0",
@@ -1392,10 +2400,12 @@ export default class PaymentController {
           ? parseFloat((totalRevenue / completedPayments.length).toFixed(2))
           : 0;
 
-      // Get unique active subscriptions
+      // Match active subscriptions the same way as admin overview stats
       const activeUsers = await User.countDocuments({
-        onboardingCompleted: true,
         role: "user",
+        isActive: true,
+        onboardingCompleted: true,
+        "subscription.status": "active",
       });
 
       // Revenue by gateway
@@ -1421,7 +2431,7 @@ export default class PaymentController {
           totalRevenue: parseFloat(totalRevenue.toFixed(2)),
           thisMonth: parseFloat(thisMonth.toFixed(2)),
           lastPaymentAmount,
-          totalCount: payments.length,
+          totalCount: completedPayments.length,
           completedCount: completedPayments.length,
           failedCount: failedPayments.length,
           pendingCount: pendingPayments.length,
@@ -1459,6 +2469,7 @@ export default class PaymentController {
   static async cancelSubscription(req: Request, res: Response) {
     try {
       const { userId } = req.params;
+      const { adminDescription } = req.body;
 
       if (!userId) {
         return res.status(400).json({
@@ -1475,11 +2486,50 @@ export default class PaymentController {
         });
       }
 
+      let resolvedSubscriptionId: string | null = user.stripeSubscriptionId || null;
+
       // Check if user has an active subscription
       if (!user.subscription || user.subscription.status !== "active") {
-        return res.status(400).json({
-          success: false,
-          message: "No active subscription found to cancel",
+        const cancelSubscriptionId = resolvedSubscriptionId || "N/A";
+        const fallbackPhone =
+          String((user as any)?.dialingCode || "") +
+          String((user as any)?.localNumber || "");
+        const phoneNumber = (user as any)?.phoneNumber || fallbackPhone.trim() || "";
+
+        await CancelSubscriptionModel.findOneAndUpdate(
+          { userId: String(user._id) },
+          {
+            $set: {
+              subscriptionId: cancelSubscriptionId,
+              status: "cancelled",
+              cancelledAt: new Date(),
+              ...(adminDescription !== undefined
+                ? { adminDescription: String(adminDescription).trim() }
+                : {}),
+            },
+            $setOnInsert: {
+              firstName: user.firstName || "",
+              lastName: user.lastName || "",
+              email: user.email || "",
+              phoneNumber,
+              country: user.country || "",
+              subscribedAt: user.subscription?.startDate || undefined,
+              userId: String(user._id),
+              plan: user.plan || "",
+              description: "",
+            },
+          },
+          { new: true, sort: { createdAt: -1 }, upsert: true }
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Subscription cancelled successfully",
+          subscription: {
+            status: user.subscription?.status || "inactive",
+            cancelledAt: user.subscription?.cancelledAt || null,
+            plan: user.plan,
+          },
         });
       }
 
@@ -1497,15 +2547,28 @@ export default class PaymentController {
           }).sort({ createdAt: -1 });
 
           if (!payment?.subscriptionId) {
-            return res.status(400).json({
-              success: false,
-              message: "No active Stripe subscription found",
-            });
+            // No Stripe subscription found; proceed with local cancellation
+            resolvedSubscriptionId = resolvedSubscriptionId || "N/A";
+          } else {
+            resolvedSubscriptionId = payment.subscriptionId;
+            try {
+              await StripeService.cancelSubscription(payment.subscriptionId);
+            } catch (stripeErr: any) {
+              const msg = String(stripeErr?.message || "");
+              if (!msg.includes("No such subscription")) {
+                throw stripeErr;
+              }
+            }
           }
-
-          await StripeService.cancelSubscription(payment.subscriptionId);
         } else {
-          await StripeService.cancelSubscription(user.stripeSubscriptionId);
+          try {
+            await StripeService.cancelSubscription(user.stripeSubscriptionId);
+          } catch (stripeErr: any) {
+            const msg = String(stripeErr?.message || "");
+            if (!msg.includes("No such subscription")) {
+              throw stripeErr;
+            }
+          }
         }
       } else if (gateway === "ngenius") {
         // For nGenius, mark payments as cancelled
@@ -1539,14 +2602,36 @@ export default class PaymentController {
         { new: true },
       );
 
+      const cancelSubscriptionId = resolvedSubscriptionId || "N/A";
+      const fallbackPhone =
+        String((user as any)?.dialingCode || "") +
+        String((user as any)?.localNumber || "");
+      const phoneNumber = (user as any)?.phoneNumber || fallbackPhone.trim() || "";
+
       const updateCancelRequest = await CancelSubscriptionModel.findOneAndUpdate(
-        { userId },
+        { userId: String(user._id) },
         {
-          subscriptionId: updatedUser?.stripeSubscriptionId || null,
-          isCancelled: true,
-          cancelledAt: new Date(),
+          $set: {
+            subscriptionId: cancelSubscriptionId,
+            status: "cancelled",
+            cancelledAt: new Date(),
+            ...(adminDescription !== undefined
+              ? { adminDescription: String(adminDescription).trim() }
+              : {}),
+          },
+          $setOnInsert: {
+            firstName: user.firstName || "",
+            lastName: user.lastName || "",
+            email: user.email || "",
+            phoneNumber,
+            country: user.country || "",
+            subscribedAt: user.subscription?.startDate || undefined,
+            userId: String(user._id),
+            plan: user.plan || "",
+            description: "",
+          },
         },
-        { new: true }
+        { new: true, sort: { createdAt: -1 }, upsert: true }
       );
 
       return res.status(200).json({
@@ -1563,6 +2648,69 @@ export default class PaymentController {
       return res.status(500).json({
         success: false,
         message: "Failed to cancel subscription",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    }
+  }
+
+  /**
+   * Update cancel subscription request status from admin panel
+   */
+  static async updateCancelSubscriptionStatus(req: Request, res: Response) {
+    try {
+      const { userId } = req.params;
+      const { status, adminDescription } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
+
+      const allowedStatuses = ["pending", "retained", "cancelled"] as const;
+      if (!status || !allowedStatuses.includes(status)) {
+        return res.status(400).json({
+          success: false,
+          message: "status must be one of pending, retained, cancelled",
+        });
+      }
+
+      const updateData: any = {
+        status,
+      };
+
+      if (adminDescription !== undefined) {
+        updateData.adminDescription = String(adminDescription).trim();
+      }
+
+      if (status === "cancelled") {
+        updateData.cancelledAt = new Date();
+      }
+
+      const updatedCancelRequest = await CancelSubscriptionModel.findOneAndUpdate(
+        { userId },
+        updateData,
+        { new: true, sort: { createdAt: -1 } },
+      );
+
+      if (!updatedCancelRequest) {
+        return res.status(404).json({
+          success: false,
+          message: "Cancel subscription request not found",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Cancel subscription status updated successfully",
+        data: updatedCancelRequest,
+      });
+    } catch (error) {
+      console.error("❌ Update cancel subscription status error:", error);
+      return res.status(500).json({
+        success: false,
+        message: "Failed to update cancel subscription status",
         error: error instanceof Error ? error.message : "Unknown error",
       });
     }
@@ -1705,6 +2853,140 @@ async function getUsdToAedRate() {
     console.error("Error fetching exchange rate:", error);
     return 3.6725;
   }
+}
+
+const LEGACY_PLAN_CONFIG: Record<PlanType, { yoga: number; zumba: number; specialty: number }> =
+  PLAN_CONFIG;
+
+type Credits = { yoga: number; zumba: number; specialty: number };
+
+async function resolvePlanCredits(planKey: string): Promise<Credits | null> {
+  const normalizedPlanKey = planKey.trim().toLowerCase();
+  const legacyCredits = LEGACY_PLAN_CONFIG[normalizedPlanKey as PlanType];
+  if (legacyCredits) {
+    return { ...legacyCredits };
+  }
+
+  const query: any = {
+    $or: [
+      { uuid: planKey },
+      { name: { $regex: `^${escapeRegExp(planKey)}$`, $options: "i" } },
+    ],
+  };
+
+  if (mongoose.Types.ObjectId.isValid(planKey)) {
+    query.$or.push({ _id: planKey });
+  }
+
+  const planDoc = await PlanModel.findOne(query).lean();
+  if (planDoc) {
+    return distributeCreditsFromPlan({
+      classCountPerMonth: Number(planDoc.classCountPerMonth || 0),
+      services: Array.isArray(planDoc.services) ? planDoc.services : [],
+      serviceClassCounts: Array.isArray((planDoc as any).serviceClassCounts)
+        ? (planDoc as any).serviceClassCounts
+        : [],
+    });
+  }
+
+  const candidatePlans = await PlanModel.find(
+    {},
+    { services: 1, classCountPerMonth: 1, serviceClassCounts: 1, name: 1 },
+  ).lean();
+  const matchedBySlug = candidatePlans.find(
+    (candidate) => slugifyPlanName(candidate.name || "") === normalizedPlanKey,
+  );
+
+  if (!matchedBySlug) {
+    return null;
+  }
+
+  return distributeCreditsFromPlan({
+    classCountPerMonth: Number(matchedBySlug.classCountPerMonth || 0),
+    services: Array.isArray(matchedBySlug.services) ? matchedBySlug.services : [],
+    serviceClassCounts: Array.isArray((matchedBySlug as any).serviceClassCounts)
+      ? (matchedBySlug as any).serviceClassCounts
+      : [],
+  });
+}
+
+function distributeCreditsFromPlan(plan: {
+  classCountPerMonth: number;
+  services: string[];
+  serviceClassCounts?: Array<{ service?: string; classCountPerMonth?: number }>;
+}): Credits {
+  if (Array.isArray(plan.serviceClassCounts) && plan.serviceClassCounts.length > 0) {
+    const creditsFromServices: Credits = { yoga: 0, zumba: 0, specialty: 0 };
+
+    for (const serviceEntry of plan.serviceClassCounts) {
+      const bucket = getPlanBuckets([String(serviceEntry?.service || "")])[0] || "specialty";
+      const classCount = Math.max(
+        0,
+        Math.floor(Number(serviceEntry?.classCountPerMonth || 0)),
+      );
+      creditsFromServices[bucket] += classCount;
+    }
+
+    return creditsFromServices;
+  }
+
+  const totalClasses = Math.max(0, Math.floor(plan.classCountPerMonth || 0));
+  const buckets = getPlanBuckets(plan.services);
+
+  if (totalClasses === 0 || buckets.length === 0) {
+    return { yoga: 0, zumba: 0, specialty: totalClasses };
+  }
+
+  const credits: Credits = { yoga: 0, zumba: 0, specialty: 0 };
+  const base = Math.floor(totalClasses / buckets.length);
+  let remainder = totalClasses % buckets.length;
+
+  buckets.forEach((bucket, index) => {
+    credits[bucket] += base + (index < remainder ? 1 : 0);
+  });
+
+  return credits;
+}
+
+function getPlanBuckets(services: string[]): Array<keyof Credits> {
+  const buckets: Array<keyof Credits> = [];
+
+  for (const rawService of services) {
+    const normalized = String(rawService || "").trim().toLowerCase();
+    let bucket: keyof Credits = "specialty";
+
+    if (normalized.includes("yoga")) {
+      bucket = "yoga";
+    } else if (normalized.includes("zumba")) {
+      bucket = "zumba";
+    }
+
+    if (!buckets.includes(bucket)) {
+      buckets.push(bucket);
+    }
+  }
+
+  return buckets;
+}
+
+function slugifyPlanName(value: string): string {
+  return value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)/g, "");
+}
+
+function toDisplayPlanName(value: string): string {
+  return value
+    .split("-")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // Helper function to add credits (for upgrades)

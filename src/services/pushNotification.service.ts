@@ -1,0 +1,1145 @@
+import fs from "fs";
+import path from "path";
+import DeviceToken from "../modules/NotificationModule/models/DeviceToken";
+import PushNotificationLog from "../modules/NotificationModule/models/PushNotificationLog";
+import MeetingAttendance from "../modules/MeetingModule/MeetingModels/MeetingAttendance";
+import MeetingParticipant from "../modules/MeetingModule/MeetingModels/MeetingParticipant";
+import regionModel from "../modules/RegionModule/region.model";
+import countryModel from "../modules/CountryModule/country.model";
+import User from "../modules/UserModule/models/User";
+
+let firebaseAdmin: any = null;
+
+const loadFirebaseAdmin = () => {
+  if (firebaseAdmin) {
+    return firebaseAdmin;
+  }
+
+  try {
+    // firebase-admin is optional in local/dev installs; skip push delivery if unavailable.
+    firebaseAdmin = require("firebase-admin");
+    return firebaseAdmin;
+  } catch (error) {
+    console.warn("⚠️ [PushNotificationService] firebase-admin module not available; FCM disabled");
+    return null;
+  }
+};
+
+type PushPayload = {
+  title: string;
+  body: string;
+  data?: Record<string, string>;
+  highPriority?: boolean;
+};
+
+export class PushNotificationService {
+  private static firebaseReady = false;
+  private static firebaseEnabled = false;
+
+  private static initializeFirebase() {
+    if (this.firebaseReady) return;
+    this.firebaseReady = true;
+
+    const admin = loadFirebaseAdmin();
+
+    if (!admin) {
+      this.firebaseEnabled = false;
+      return;
+    }
+
+    try {
+      if (admin.apps.length) {
+        this.firebaseEnabled = true;
+        return;
+      }
+
+      const serviceAccountJson = process.env.FCM_SERVICE_ACCOUNT_JSON;
+      const serviceAccountPath = process.env.FCM_SERVICE_ACCOUNT_PATH;
+
+      if (serviceAccountJson) {
+        const credentials = JSON.parse(serviceAccountJson);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: "FCM_SERVICE_ACCOUNT_JSON",
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
+        admin.initializeApp({
+          credential: admin.credential.cert(credentials),
+        });
+        this.firebaseEnabled = true;
+        return;
+      }
+
+      if (serviceAccountPath && fs.existsSync(serviceAccountPath)) {
+        const raw = fs.readFileSync(serviceAccountPath, "utf8");
+        const credentials = JSON.parse(raw);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: "FCM_SERVICE_ACCOUNT_PATH",
+          path: serviceAccountPath,
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
+        admin.initializeApp({
+          credential: admin.credential.cert(credentials),
+        });
+        this.firebaseEnabled = true;
+        return;
+      }
+
+      if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        admin.initializeApp({
+          credential: admin.credential.applicationDefault(),
+        });
+        this.firebaseEnabled = true;
+        return;
+      }
+
+      const candidatePaths = [
+        process.env.FCM_SERVICE_ACCOUNT_PATH,
+        path.resolve(process.cwd(), "firebase-service-account.json"),
+        path.resolve(__dirname, "../../firebase-service-account.json"),
+        path.resolve(__dirname, "../../../firebase-service-account.json"),
+      ].filter((item): item is string => Boolean(item));
+
+      for (const candidatePath of candidatePaths) {
+        if (!fs.existsSync(candidatePath)) {
+          continue;
+        }
+
+        const raw = fs.readFileSync(candidatePath, "utf8");
+        const credentials = JSON.parse(raw);
+        console.log("🔐 [PushNotificationService] firebase:init", {
+          source: path.basename(candidatePath),
+          path: candidatePath,
+          projectId: credentials?.project_id,
+          keyId: credentials?.private_key_id,
+          clientEmail: credentials?.client_email,
+        });
+        admin.initializeApp({
+          credential: admin.credential.cert(credentials),
+        });
+        this.firebaseEnabled = true;
+        return;
+      }
+
+      console.warn(
+        "⚠️ FCM not configured. Set FCM_SERVICE_ACCOUNT_JSON or FCM_SERVICE_ACCOUNT_PATH or GOOGLE_APPLICATION_CREDENTIALS",
+      );
+    } catch (error) {
+      console.error("❌ Failed to initialize Firebase Admin SDK:", error);
+      this.firebaseEnabled = false;
+    }
+  }
+
+  private static normalizeData(data?: Record<string, any>) {
+    if (!data) return undefined;
+
+    const normalized: Record<string, string> = {};
+    for (const [key, value] of Object.entries(data)) {
+      normalized[key] = typeof value === "string" ? value : JSON.stringify(value);
+    }
+
+    return normalized;
+  }
+
+  private static async sendMulticast(tokens: string[], payload: PushPayload) {
+    this.initializeFirebase();
+    const admin = loadFirebaseAdmin();
+
+    console.log("🔔 [PushNotificationService] dispatch:start", {
+      title: payload.title,
+      highPriority: Boolean(payload.highPriority),
+      tokenCount: tokens.length,
+    });
+
+    if (!this.firebaseEnabled) {
+      console.warn("⚠️ [PushNotificationService] dispatch:skipped - FCM not configured", {
+        title: payload.title,
+        tokenCount: tokens.length,
+      });
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [] as string[],
+        reason: "fcm_not_configured",
+      };
+    }
+
+    if (!admin) {
+      console.warn("⚠️ [PushNotificationService] dispatch:skipped - firebase-admin unavailable", {
+        title: payload.title,
+        tokenCount: tokens.length,
+      });
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [] as string[],
+        reason: "firebase_admin_unavailable",
+      };
+    }
+
+    if (tokens.length === 0) {
+      console.warn("⚠️ [PushNotificationService] dispatch:skipped - no device tokens", {
+        title: payload.title,
+      });
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [] as string[],
+        reason: "no_tokens",
+      };
+    }
+
+    const message: any = {
+      tokens,
+      notification: {
+        title: payload.title,
+        body: payload.body,
+      },
+      data: this.normalizeData(payload.data),
+      android: {
+        priority: payload.highPriority ? "high" : "normal",
+      },
+      apns: {
+        headers: {
+          // For visible notifications, keep APNS at immediate delivery priority.
+          "apns-priority": "10",
+          "apns-push-type": "alert",
+        },
+        payload: {
+          aps: {
+            sound: "default",
+          },
+        },
+      },
+    };
+
+    let response: any;
+
+    try {
+      response = await admin.messaging().sendEachForMulticast(message);
+    } catch (error: any) {
+      const code = error?.code || "unknown";
+      const errorMessage = error?.message || "Failed to send multicast push";
+
+      console.error("❌ [PushNotificationService] dispatch:error", {
+        title: payload.title,
+        tokenCount: tokens.length,
+        code,
+        message: errorMessage,
+      });
+
+      return {
+        successCount: 0,
+        failureCount: tokens.length,
+        invalidTokens: [] as string[],
+        errorCodeSummary: { [code]: tokens.length },
+        failureSamples: [
+          {
+            tokenPrefix: String(tokens[0] || "").slice(0, 24),
+            code,
+            message: errorMessage,
+          },
+        ],
+        reason: "fcm_send_failed",
+      };
+    }
+    const invalidTokens: string[] = [];
+    const errorCodeSummary: Record<string, number> = {};
+    const failureSamples: Array<{ tokenPrefix: string; code: string; message: string }> = [];
+
+    response.responses.forEach((item: any, index: number) => {
+      if (!item.success) {
+        const code = item.error?.code || "";
+        const message = item.error?.message || "";
+        const normalizedCode = code || "unknown";
+
+        errorCodeSummary[normalizedCode] = (errorCodeSummary[normalizedCode] || 0) + 1;
+
+        if (failureSamples.length < 5) {
+          failureSamples.push({
+            tokenPrefix: String(tokens[index] || "").slice(0, 24),
+            code: normalizedCode,
+            message,
+          });
+        }
+
+        if (
+          code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token"
+        ) {
+          invalidTokens.push(tokens[index]);
+        }
+      }
+    });
+
+    console.log("✅ [PushNotificationService] dispatch:done", {
+      title: payload.title,
+      tokenCount: tokens.length,
+      successCount: response.successCount,
+      failureCount: response.failureCount,
+      invalidTokenCount: invalidTokens.length,
+      errorCodeSummary,
+    });
+
+    if (response.failureCount > 0) {
+      console.warn("⚠️ [PushNotificationService] dispatch:failure-details", {
+        title: payload.title,
+        errorCodeSummary,
+        failureSamples,
+      });
+    }
+
+    return {
+      successCount: response.successCount,
+      failureCount: response.failureCount,
+      invalidTokens,
+      errorCodeSummary,
+      failureSamples,
+      reason: "sent",
+    };
+  }
+
+  static async sendToUser(
+    userId: string,
+    payload: PushPayload,
+    options?: {
+      category?: "transactional" | "reminder" | "lifecycle" | "broadcast" | "security";
+      eventType?: string;
+      dedupeKey?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    if (options?.dedupeKey) {
+      const existing = await PushNotificationLog.findOne({ dedupeKey: options.dedupeKey })
+        .select("_id")
+        .lean();
+
+      if (existing) {
+        return { skipped: true, reason: "duplicate", successCount: 0, failureCount: 0 };
+      }
+    }
+
+    const recipient = await User.findById(userId).select("email firstName lastName").lean();
+    const tokenDocs = await DeviceToken.find({ userId, isActive: true }).select("token platform");
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    console.log("🔔 [PushNotificationService] sendToUser", {
+      userId,
+      email: (recipient as any)?.email || null,
+      name: [recipient?.firstName, recipient?.lastName].filter(Boolean).join(" ") || null,
+      title: payload.title,
+      tokenCount: tokens.length,
+      platformSummary,
+      tokenPrefixes: tokens.slice(0, 5).map((token) => String(token).slice(0, 24)),
+      category: options?.category || "transactional",
+      eventType: options?.eventType || "push.single",
+    });
+
+    const result = await this.sendMulticast(tokens, payload);
+
+    if (result.invalidTokens.length > 0) {
+      await DeviceToken.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { isActive: false, lastSeenAt: new Date() } },
+      );
+    }
+
+    await PushNotificationLog.create({
+      userId,
+      eventType: options?.eventType || "push.single",
+      category: options?.category || "transactional",
+      title: payload.title,
+      body: payload.body,
+      tokenCount: tokens.length,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      dedupeKey: options?.dedupeKey,
+      metadata: options?.metadata || null,
+      sentAt: new Date(),
+    });
+
+    console.log("✅ [PushNotificationService] sendToUser:logged", {
+      userId,
+      title: payload.title,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      reason: (result as any).reason || "sent",
+    });
+
+    return result;
+  }
+
+  static async sendToUserPrimaryDevice(
+    userId: string,
+    payload: PushPayload,
+    options?: {
+      category?: "transactional" | "reminder" | "lifecycle" | "broadcast" | "security";
+      eventType?: string;
+      dedupeKey?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    if (options?.dedupeKey) {
+      const existing = await PushNotificationLog.findOne({ dedupeKey: options.dedupeKey })
+        .select("_id")
+        .lean();
+
+      if (existing) {
+        return { skipped: true, reason: "duplicate", successCount: 0, failureCount: 0 };
+      }
+    }
+
+    const recipient = await User.findById(userId).select("email firstName lastName").lean();
+    const tokenDocs = await DeviceToken.find({ userId, isActive: true })
+      .sort({ lastSeenAt: -1, updatedAt: -1, createdAt: -1 })
+      .select("token platform lastSeenAt updatedAt createdAt");
+
+    const primaryTokenDoc = tokenDocs[0];
+    const tokens = primaryTokenDoc?.token ? [primaryTokenDoc.token] : [];
+    const platformSummary = primaryTokenDoc?.platform
+      ? { [String(primaryTokenDoc.platform)]: 1 }
+      : {};
+
+    console.log("🔔 [PushNotificationService] sendToUserPrimaryDevice", {
+      userId,
+      email: (recipient as any)?.email || null,
+      name: [recipient?.firstName, recipient?.lastName].filter(Boolean).join(" ") || null,
+      title: payload.title,
+      tokenCount: tokens.length,
+      platformSummary,
+      tokenPrefixes: tokens.slice(0, 5).map((token) => String(token).slice(0, 24)),
+      category: options?.category || "transactional",
+      eventType: options?.eventType || "push.single",
+    });
+
+    const result = await this.sendMulticast(tokens, payload);
+
+    if (result.invalidTokens.length > 0) {
+      await DeviceToken.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { isActive: false, lastSeenAt: new Date() } },
+      );
+    }
+
+    await PushNotificationLog.create({
+      userId,
+      eventType: options?.eventType || "push.single",
+      category: options?.category || "transactional",
+      title: payload.title,
+      body: payload.body,
+      tokenCount: tokens.length,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      dedupeKey: options?.dedupeKey,
+      metadata: options?.metadata || null,
+      sentAt: new Date(),
+    });
+
+    console.log("✅ [PushNotificationService] sendToUserPrimaryDevice:logged", {
+      userId,
+      title: payload.title,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      reason: (result as any).reason || "sent",
+    });
+
+    return result;
+  }
+
+  static async sendToUsers(
+    userIds: string[],
+    payload: PushPayload,
+    options?: {
+      category?: "transactional" | "reminder" | "lifecycle" | "broadcast" | "security";
+      eventType?: string;
+      metadata?: Record<string, any>;
+    },
+  ) {
+    if (!userIds.length) {
+      return { successCount: 0, failureCount: 0, invalidTokens: [] as string[] };
+    }
+
+    const recipientUsers = await User.find({ _id: { $in: userIds } }).select("email firstName lastName").lean();
+    const recipientMap = new Map(
+      recipientUsers.map((user: any) => [String(user?._id), user]),
+    );
+    const tokenDocs = await DeviceToken.find({
+      userId: { $in: userIds },
+      isActive: true,
+    }).select("token userId platform");
+
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
+    const usersWithTokens = new Set(tokenDocs.map((doc) => String(doc.userId)));
+    const usersWithoutTokens = userIds.filter((id) => !usersWithTokens.has(id));
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    console.log("🔔 [PushNotificationService] sendToUsers", {
+      userCount: userIds.length,
+      title: payload.title,
+      tokenCount: tokens.length,
+      platformSummary,
+      usersWithTokens: usersWithTokens.size,
+      usersWithoutTokens: usersWithoutTokens.length,
+      recipients: userIds.slice(0, 20).map((id) => {
+        const user = recipientMap.get(String(id)) as any;
+        return {
+          userId: String(id),
+          email: user?.email || null,
+          name: [user?.firstName, user?.lastName].filter(Boolean).join(" ") || null,
+        };
+      }),
+      category: options?.category || "transactional",
+      eventType: options?.eventType || "push.bulk",
+    });
+
+    if (usersWithoutTokens.length > 0) {
+      console.warn(
+        "⚠️ [PushNotificationService] Users without device tokens (may not have app installed):",
+        { userCount: usersWithoutTokens.length },
+      );
+    }
+
+    const result = await this.sendMulticast(tokens, payload);
+
+    if (result.invalidTokens.length > 0) {
+      await DeviceToken.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { isActive: false, lastSeenAt: new Date() } },
+      );
+    }
+
+    await PushNotificationLog.create({
+      eventType: options?.eventType || "push.bulk",
+      category: options?.category || "transactional",
+      title: payload.title,
+      body: payload.body,
+      tokenCount: tokens.length,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      metadata: options?.metadata || null,
+      sentAt: new Date(),
+    });
+
+    console.log("✅ [PushNotificationService] sendToUsers:logged", {
+      userCount: userIds.length,
+      title: payload.title,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      reason: (result as any).reason || "sent",
+    });
+
+    return result;
+  }
+
+  private static async resolveUserIdsByRegion(regionName: string): Promise<string[]> {
+    const regionDoc = await regionModel.findOne({ name: regionName }).select("_id");
+    if (!regionDoc) return [];
+
+    const countries = await countryModel
+      .find({ region: regionDoc._id, status: "active" })
+      .select("code")
+      .lean();
+
+    const countryCodes = countries
+      .map((item: any) => String(item?.code || "").trim())
+      .filter(Boolean);
+
+    if (!countryCodes.length) return [];
+
+    const users = await User.find({
+      countryCode: { $in: countryCodes },
+      isActive: true,
+      isEmailVerified: true,
+      "subscription.status": "active",
+    })
+      .select("_id")
+      .lean();
+
+    return users.map((item: any) => String(item._id));
+  }
+
+  private static async resolveUserIdsByMeeting(meetingId: string): Promise<string[]> {
+    const [participantIds, attendanceIds] = await Promise.all([
+      MeetingParticipant.distinct("userId", { meetingId }),
+      MeetingAttendance.distinct("user", {
+        meeting: meetingId,
+        status: { $in: ["registered", "joined", "completed"] },
+      }),
+    ]);
+
+    return Array.from(
+      new Set(
+        [...participantIds, ...attendanceIds]
+          .map((id) => String(id || "").trim())
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  static async sendMeetingLifecycleToRegion(params: {
+    action: "created" | "rescheduled" | "cancelled";
+    meetingId: string;
+    meetingTitle: string;
+    region: string;
+    localTime?: Date;
+  }) {
+    if (params.action === "cancelled") {
+      // Cancellation notifications are intentionally disabled.
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "meeting_cancel_notifications_disabled",
+      };
+    }
+
+    const userIds = await this.resolveUserIdsByRegion(params.region);
+
+    const titleMap = {
+      created: "🚨 Meeting Update Alert",
+      rescheduled: "🚨 Meeting Update Alert",
+      cancelled: "🚨 Meeting Update Alert",
+    };
+
+    const bodyMap = {
+      created: `Good news! ${params.meetingTitle} in your region (${params.region}) has been created${params.localTime ? ` for ${params.localTime.toLocaleString()}` : ""}. Stay tuned and don’t miss out 📍`,
+      rescheduled: `Good news! ${params.meetingTitle} in your region (${params.region}) has been rescheduled${params.localTime ? ` to ${params.localTime.toLocaleString()}` : ""}. Stay tuned and don’t miss out 📍`,
+      cancelled: `Good news! ${params.meetingTitle} in your region (${params.region}) has been cancelled. Stay tuned and don’t miss out 📍`,
+    };
+
+    return this.sendToUsers(
+      userIds,
+      {
+        title: titleMap[params.action],
+        body: bodyMap[params.action],
+        highPriority: true,
+        data: {
+          type: "meeting.lifecycle",
+          action: params.action,
+          meetingId: params.meetingId,
+          region: params.region,
+          localTime: params.localTime ? params.localTime.toISOString() : "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: `meeting.${params.action}`,
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendMeetingLifecycleToParticipants(params: {
+    action: "created" | "rescheduled" | "cancelled";
+    meetingId: string;
+    meetingTitle: string;
+    localTime?: Date;
+  }) {
+    if (params.action === "cancelled") {
+      // Cancellation notifications are intentionally disabled.
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "meeting_cancel_notifications_disabled",
+      };
+    }
+
+    const userIds = await this.resolveUserIdsByMeeting(params.meetingId);
+
+    const titleMap = {
+      created: "🔔 Your Meeting Update",
+      rescheduled: "🔔 Your Meeting Update",
+      cancelled: "🔔 Your Meeting Update",
+    };
+
+    const bodyMap = {
+      created: `Hi there, your meeting ${params.meetingTitle} has been created${params.localTime ? ` for ${params.localTime.toLocaleString()}` : ""}. Check the details and stay prepared 💼✨`,
+      rescheduled: `Hi there, your meeting ${params.meetingTitle} has been rescheduled${params.localTime ? ` to ${params.localTime.toLocaleString()}` : ""}. Check the details and stay prepared 💼✨`,
+      cancelled: `Hi there, your meeting ${params.meetingTitle} has been cancelled. Check the details and stay prepared 💼✨`,
+    };
+
+    if (!userIds.length) {
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "no_participants",
+      };
+    }
+
+    return this.sendToUsers(
+      userIds,
+      {
+        title: titleMap[params.action],
+        body: bodyMap[params.action],
+        highPriority: true,
+        data: {
+          type: "meeting.lifecycle",
+          action: params.action,
+          meetingId: params.meetingId,
+          localTime: params.localTime ? params.localTime.toISOString() : "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: `meeting.${params.action}`,
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendSessionReminderToUsers(
+    userIds: string[],
+    params: {
+      meetingId: string;
+      meetingTitle: string;
+      minutesBefore: number;
+      classStartAt: Date;
+      region: string;
+      userTimezones?: Map<string, string>;
+    },
+  ) {
+    console.log("📨 [PushNotificationService] sendSessionReminderToUsers:start", {
+      meetingId: params.meetingId,
+      userCount: userIds.length,
+      meetingTitle: params.meetingTitle,
+      region: params.region,
+    });
+
+    // Determine message based on reminder offset
+    const isLiveNow = params.minutesBefore === 0;
+    const reminderTitle = isLiveNow ? "We're live now! 🚀" : "Almost time to move! 🕒";
+    const reminderBody = isLiveNow
+      ? `We're live now! Jump in and give yourself this moment of energy and focus 💪`
+      : `Hey there, ${params.meetingTitle} starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). Get ready to make the most of it 💡`;
+
+    const result = await this.sendToUsers(
+      userIds,
+      {
+        title: reminderTitle,
+        body: reminderBody,
+        highPriority: true,
+        data: {
+          type: "meeting.reminder",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          minutesBefore: String(params.minutesBefore),
+          classStartAt: params.classStartAt.toISOString(),
+          region: params.region,
+        },
+      },
+      {
+        category: "reminder",
+        eventType: "meeting.reminder",
+        metadata: params,
+      },
+    );
+
+    console.log("📨 [PushNotificationService] sendSessionReminderToUsers:done", {
+      meetingId: params.meetingId,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    });
+
+    return result;
+  }
+
+  static async sendLiveNowSessionReminderToUsers(
+    userIds: string[],
+    params: {
+      meetingId: string;
+      meetingTitle: string;
+      classStartAt: Date;
+      region: string;
+    },
+  ) {
+    console.log("📨 [PushNotificationService] sendLiveNowSessionReminderToUsers:start", {
+      meetingId: params.meetingId,
+      userCount: userIds.length,
+      meetingTitle: params.meetingTitle,
+      region: params.region,
+    });
+
+    const result = await this.sendToUsers(
+      userIds,
+      {
+        title: "We’re live now! 🚀",
+        body: "We’re live now! Jump in and give yourself this moment of energy and focus 💪",
+        highPriority: true,
+        data: {
+          type: "meeting.reminder",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          minutesBefore: "0",
+          classStartAt: params.classStartAt.toISOString(),
+          region: params.region,
+        },
+      },
+      {
+        category: "reminder",
+        eventType: "meeting.reminder",
+        metadata: params,
+      },
+    );
+
+    console.log("📨 [PushNotificationService] sendLiveNowSessionReminderToUsers:done", {
+      meetingId: params.meetingId,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+    });
+
+    return result;
+  }
+
+  static async sendSessionReminderToParticipants(
+    meetingId: string,
+    params: {
+      meetingTitle: string;
+      minutesBefore: number;
+      classStartAt: Date;
+      region?: string;
+    },
+  ) {
+    const userIds = await this.resolveUserIdsByMeeting(meetingId);
+
+    if (!userIds.length) {
+      return {
+        successCount: 0,
+        failureCount: 0,
+        invalidTokens: [],
+        skipped: true,
+        reason: "no_participants",
+      };
+    }
+
+    return this.sendToUsers(
+      userIds,
+      {
+        title: "🎯 Almost Time!",
+        body: `${params.meetingTitle} is just around the corner and starts in ${params.minutesBefore} minutes (${params.classStartAt.toLocaleString()}). We’re excited to have you there 🚀`,
+        highPriority: true,
+        data: {
+          type: "meeting.reminder",
+          screen: "ClassDetails",
+          classId: meetingId,
+          deeplink: `skybornedrop://class/${meetingId}`,
+          meetingId,
+          minutesBefore: String(params.minutesBefore),
+          classStartAt: params.classStartAt.toISOString(),
+          region: params.region || "",
+        },
+      },
+      {
+        category: "reminder",
+        eventType: "meeting.reminder",
+        metadata: { meetingId, ...params },
+      },
+    );
+  }
+
+  static async sendSubscriptionExpiryReminder(
+    userId: string,
+    daysLeft: number,
+    endDate: Date,
+    dedupeKey: string,
+  ) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "Don’t Miss Out",
+        body: `Don’t miss out — ensure sufficient balance for AutoPay renewal. Your subscription expires in ${daysLeft} day${daysLeft > 1 ? "s" : ""} (on ${endDate.toDateString()}).`,
+        highPriority: false,
+        data: {
+          type: "subscription.expiry",
+          daysLeft: String(daysLeft),
+          endDate: endDate.toISOString(),
+        },
+      },
+      {
+        category: "lifecycle",
+        eventType: "subscription.expiry_reminder",
+        dedupeKey,
+        metadata: { daysLeft, endDate },
+      },
+    );
+  }
+
+  static async sendWelcome(userId: string, firstName?: string) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "🎉 Welcome Aboard!",
+        body: `Hi ${firstName || "there"}, welcome to the family! We’re thrilled to have you with us 🤗`,
+        highPriority: true,
+        data: { type: "account.welcome" },
+      },
+      {
+        category: "lifecycle",
+        eventType: "account.welcome",
+      },
+    );
+  }
+
+  static async sendPasswordResetRequested(userId: string) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "🔐 Security Check",
+        body: "We received a password reset request. If this was you, go ahead and proceed. If not, please secure your account immediately ⚡",
+        highPriority: true,
+        data: { type: "security.password_reset_requested" },
+      },
+      {
+        category: "security",
+        eventType: "security.password_reset_requested",
+      },
+    );
+  }
+
+  static async sendPasswordChanged(userId: string) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "✅ Password Updated",
+        body: "Your password has been successfully changed. You’re all set and secure 🔒",
+        highPriority: true,
+        data: { type: "security.password_changed" },
+      },
+      {
+        category: "security",
+        eventType: "security.password_changed",
+      },
+    );
+  }
+
+  static async sendPaymentStatus(
+    userId: string,
+    params: {
+      success: boolean;
+      amount?: number;
+      currency?: string;
+      plan?: string;
+      invoiceId?: string;
+    },
+  ) {
+    const paymentAmount =
+      params.amount !== undefined && params.amount !== null
+        ? `${params.currency || ""} ${params.amount}`.trim()
+        : "";
+
+    return this.sendToUser(
+      userId,
+      {
+        title: "💳 Payment Update",
+        body: params.success
+          ? `Your payment was successful${paymentAmount ? ` (${paymentAmount})` : ""}${params.plan ? ` for ${params.plan}` : ""}.`
+          : `Your payment was unsuccessful${paymentAmount ? ` (${paymentAmount})` : ""}${params.plan ? ` for ${params.plan}` : ""}. Please try again to continue enjoying our services 💡`,
+        highPriority: true,
+        data: {
+          type: "payment.status",
+          status: params.success ? "success" : "failed",
+          amount: String(params.amount || ""),
+          currency: params.currency || "",
+          plan: params.plan || "",
+          invoiceId: params.invoiceId || "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: params.success ? "payment.success" : "payment.failed",
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendPlanChanged(userId: string, fromPlan: string, toPlan: string) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "🔄 Plan Updated",
+        body: `Awesome! Your plan has been upgraded from ${fromPlan} to ${toPlan}. Enjoy the new features 🎉`,
+        highPriority: true,
+        data: {
+          type: "plan.changed",
+          fromPlan,
+          toPlan,
+        },
+      },
+      {
+        category: "lifecycle",
+        eventType: "plan.changed",
+        metadata: { fromPlan, toPlan },
+      },
+    );
+  }
+
+  static async sendBookingConfirmed(
+    userId: string,
+    params: { meetingId: string; meetingTitle: string; localTime?: Date },
+  ) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "📌 Booking Confirmed",
+        body: `Your booking for ${params.meetingTitle} is confirmed${params.localTime ? ` at ${params.localTime.toLocaleString()}` : ""}! We’re excited to serve you. See you soon 😊`,
+        highPriority: true,
+        data: {
+          type: "booking.confirmed",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          localTime: params.localTime ? params.localTime.toISOString() : "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: "booking.confirmed",
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendBookingCancelled(
+    userId: string,
+    params: { meetingId: string; meetingTitle: string; localTime?: Date },
+  ) {
+    return this.sendToUser(
+      userId,
+      {
+        title: "❌ Booking Cancelled",
+        body: `Your booking for ${params.meetingTitle} has been successfully cancelled${params.localTime ? ` (scheduled at ${params.localTime.toLocaleString()})` : ""}. Hope to see you again soon 💙`,
+        highPriority: true,
+        data: {
+          type: "booking.cancelled",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          localTime: params.localTime ? params.localTime.toISOString() : "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: "booking.cancelled",
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendSessionRecordingAvailable(
+    userIds: string[],
+    params: {
+      meetingId: string;
+      meetingTitle: string;
+      recordingUrl?: string;
+    },
+  ) {
+    if (!userIds.length) {
+      return { successCount: 0, failureCount: 0, invalidTokens: [] as string[] };
+    }
+
+    return this.sendToUsers(
+      userIds,
+      {
+        title: "🎬 Recording Available",
+        body: "Missed it or want more? Your session recording is ready—watch anytime and stay on track 📹",
+        highPriority: false,
+        data: {
+          type: "session.recording_available",
+          screen: "ClassDetails",
+          classId: params.meetingId,
+          deeplink: `skybornedrop://class/${params.meetingId}`,
+          meetingId: params.meetingId,
+          recordingUrl: params.recordingUrl || "",
+        },
+      },
+      {
+        category: "transactional",
+        eventType: "session.recording_available",
+        metadata: params,
+      },
+    );
+  }
+
+  static async sendBroadcastOptIn(payload: PushPayload) {
+    const normalizedPayload: PushPayload = {
+      title: payload.title || "📢 Big News!",
+      body:
+        payload.body || "Hey there, don’t miss out on this exciting update! Check it out now and stay ahead 🚀",
+      data: payload.data,
+      highPriority: payload.highPriority,
+    };
+
+    const tokenDocs = await DeviceToken.find({ isActive: true, optInBroadcast: true }).select(
+      "token platform",
+    );
+    const tokens = tokenDocs.map((item: any) => item.token).filter(Boolean);
+    const platformSummary = tokenDocs.reduce(
+      (acc: Record<string, number>, item: any) => {
+        const platform = String(item?.platform || "unknown");
+        acc[platform] = (acc[platform] || 0) + 1;
+        return acc;
+      },
+      {},
+    );
+
+    console.log("🔔 [PushNotificationService] sendBroadcastOptIn", {
+      tokenCount: tokens.length,
+      platformSummary,
+      title: normalizedPayload.title,
+    });
+
+    const result = await this.sendMulticast(tokens, normalizedPayload);
+
+    if (result.invalidTokens.length > 0) {
+      await DeviceToken.updateMany(
+        { token: { $in: result.invalidTokens } },
+        { $set: { isActive: false, lastSeenAt: new Date() } },
+      );
+    }
+
+    await PushNotificationLog.create({
+      eventType: "broadcast.admin",
+      category: "broadcast",
+      title: normalizedPayload.title,
+      body: normalizedPayload.body,
+      tokenCount: tokens.length,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      metadata: normalizedPayload.data || null,
+      sentAt: new Date(),
+    });
+
+    return {
+      ...result,
+      tokenCount: tokens.length,
+    };
+  }
+}

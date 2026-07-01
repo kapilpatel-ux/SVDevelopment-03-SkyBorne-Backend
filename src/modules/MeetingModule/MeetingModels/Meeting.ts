@@ -1,14 +1,16 @@
 import { Schema, model, Document, Types } from "mongoose";
 import autopopulate from "mongoose-autopopulate";
+import { boolean } from "yup";
 
 // -----------------------------
 // Meeting Interface
 // -----------------------------
 export interface IRegionEntry {
-  region: string; // e.g. "Gulf"
-  localTime: string; // e.g. "10:00 AM"
-  timezone: string; // e.g. "Asia/Dubai"
-  mode: "live" | "replay"; // tells frontend live or replay
+  region?: string; // e.g. "Gulf"
+  localTime?: string; // e.g. "10:00 AM"
+  timezone?: string; // e.g. "Asia/Dubai"
+  mode?: "live" | "replay"; // tells frontend live or replay
+  date?: string; // date for this region
 }
 
 export interface IService {
@@ -23,9 +25,14 @@ export interface IMeeting extends Document {
   zoomMeetingId: number;
   service: Types.ObjectId | IService;
   title: string;
+  reminderSent?: boolean; // Track if reminder email has been sent
+  reminder30MinSent?: boolean;
+  reminder10MinSent?: boolean;
+  reminder24HourSent?: boolean;
+  reminderOnEventSent?: boolean;
   occurrenceId?: string;
 
-  // NEW FIELD: dynamic region grid
+  // Dynamic region grid
   regions: IRegionEntry[];
 
   liveRegion: string;
@@ -33,34 +40,76 @@ export interface IMeeting extends Document {
 
   startDate: Date;
   localTime: Date;
+  weeklyEndDate?: Date | null;
 
   trainer: Types.ObjectId;
   duration: number;
 
-  autoRecording: boolean;
-  rotationEnabled: boolean;
+  // NEW: Recurring class settings
+  recurringClass: boolean;
+  recurrenceType?: "weekly" | "monthly" | "custom" | "bi-weekly" | null;
+  customDays?: number[]; // Array of weekday numbers (1-7) for custom recurrence
 
+  rotationEnabled: boolean;
+  isRecurring: boolean;
   isLive: boolean;
 
   joinUrl: string;
   startUrl: string;
 
-  // NEW FIELD: recording cloud URL from Zoom
+  // Recording cloud URL from Zoom
   recordingUrl: string;
 
   status: "pending" | "completed" | "failed";
 
   createdBy: Types.ObjectId;
+  parentMeetingId?: Types.ObjectId; // Reference to parent recurring meeting
+}
+
+export interface IPopulatedMeeting extends IMeeting {
+  trainer: {
+    name: string;
+    _id?: any;
+  } | any;
+  service: {
+    title: string;
+    _id?: any;
+  } | any;
 }
 
 // -----------------------------
 // Meeting Schema
 // -----------------------------
-const MeetingSchema = new Schema<IMeeting>(
+const MeetingSchema = new Schema<IPopulatedMeeting>(
   {
     zoomMeetingId: {
       type: Number,
       required: true,
+    },
+    reminderSent: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+    reminder30MinSent: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+    reminder10MinSent: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+    reminder24HourSent: {
+      type: Boolean,
+      required: false,
+      default: false,
+    },
+    reminderOnEventSent: {
+      type: Boolean,
+      required: false,
+      default: false,
     },
     occurrenceId: {
       type: String,
@@ -80,15 +129,14 @@ const MeetingSchema = new Schema<IMeeting>(
       required: true,
     },
 
-    // -----------------------------
-    // NEW: Store all regions from frontend
-    // -----------------------------
+    // Store all regions from frontend
     regions: [
       {
-        region: { type: String, required: true },
-        localTime: { type: String, required: true },
-        timezone: { type: String, required: true },
-        mode: { type: String, enum: ["live", "replay"], required: true },
+        region: { type: String, required: false },
+        localTime: { type: String, required: false },
+        timezone: { type: String, required: false },
+        mode: { type: String, enum: ["live", "replay"], required: false },
+        date: { type: String, required: false },
       },
     ],
 
@@ -113,6 +161,12 @@ const MeetingSchema = new Schema<IMeeting>(
       required: true,
     },
 
+    weeklyEndDate: {
+      type: Date,
+      default: null,
+      required: false,
+    },
+
     trainer: {
       type: Schema.Types.ObjectId,
       ref: "Coach",
@@ -127,14 +181,37 @@ const MeetingSchema = new Schema<IMeeting>(
       max: 480,
     },
 
-    autoRecording: {
+    // NEW: Recurring class fields
+    recurringClass: {
       type: Boolean,
-      default: true,
+      default: false,
+    },
+
+    recurrenceType: {
+      type: String,
+      enum: ["weekly", "monthly", "custom", "bi-weekly", null],
+      default: null,
+    },
+
+    customDays: {
+      type: [Number],
+      default: [],
+      validate: {
+        validator: function(days: number[]) {
+          return days.every(day => day >= 1 && day <= 7);
+        },
+        message: "Custom days must be between 1 (Monday) and 7 (Sunday)"
+      }
     },
 
     rotationEnabled: {
       type: Boolean,
       default: true,
+    },
+
+    isRecurring: {
+      type: Boolean,
+      default: false,
     },
 
     isLive: {
@@ -159,7 +236,6 @@ const MeetingSchema = new Schema<IMeeting>(
       default: "",
     },
 
-    // NEW FIELD
     recordingUrl: {
       type: String,
       default: "",
@@ -171,9 +247,20 @@ const MeetingSchema = new Schema<IMeeting>(
       required: true,
       autopopulate: true,
     },
+
+    parentMeetingId: {
+      type: Schema.Types.ObjectId,
+      ref: "Meeting",
+      default: null,
+      required: false,
+    },
   },
   { timestamps: true },
 );
+
+// Add index for efficient queries
+MeetingSchema.index({ recurringClass: 1, recurrenceType: 1 });
+MeetingSchema.index({ parentMeetingId: 1 });
 
 // Plugin
 MeetingSchema.plugin(autopopulate);
@@ -181,4 +268,4 @@ MeetingSchema.plugin(autopopulate);
 // -----------------------------
 // Export Model
 // -----------------------------
-export default model<IMeeting>("Meeting", MeetingSchema);
+export default model<IPopulatedMeeting>("Meeting", MeetingSchema);

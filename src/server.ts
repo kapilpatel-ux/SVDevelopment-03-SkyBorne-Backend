@@ -11,6 +11,7 @@ import { connectRedis } from "./config/redis"; // Your Redis connection file
 import app from "./app"; // Imported Express app
 import { initializeSocket, setIOInstance } from "./config/socket";
 import { startCurrencyCron } from "./modules/CurrencyModule/CurrencyCron";
+import { startUserPurgeCron } from "./services/userPurgeService";
 
 const PORT = process.env.PORT || 8000;
 
@@ -39,6 +40,8 @@ const startServer = async () => {
       () => {
         console.log(`🌐 Server running on port ${PORT}`);
         startCurrencyCron();
+        // Start user purge cron (default retention: 30 days)
+        startUserPurgeCron(Number(process.env.USER_PURGE_DAYS) || 30);
       },
     );
 

@@ -1,15 +1,23 @@
 // src/config/socket.ts
 import { Server as HTTPServer } from "http";
 import { Server as SocketServer, Socket } from "socket.io";
+import { getAllowedOrigins, isOriginAllowed } from "../utils/cors";
 
 // Store user socket connections
 export const userSocketMap = new Map<string, string>(); // userId -> socketId
 
 export function initializeSocket(httpServer: HTTPServer) {
+  const allowedOrigins = getAllowedOrigins();
+
   const io = new SocketServer(httpServer, {
     cors: {
       // For mobile apps, allow all origins or specific app schemes
-      origin: true, // Accept connections from any origin (mobile apps)
+      origin: (origin, callback) => {
+        if (isOriginAllowed(origin, allowedOrigins)) {
+          return callback(null, true);
+        }
+        return callback(new Error("Not allowed by CORS"));
+      },
       methods: ["GET", "POST"],
       credentials: true,
     },

@@ -1,16 +1,22 @@
 import { Document } from "mongoose";
 
+export type CancelSubscriptionStatus = "pending" | "retained" | "cancelled";
+
 export interface ICancelSubscription extends Document {
   subscriptionId: string;
   firstName: string;
   lastName: string;
   email: string;
+  phoneNumber?: string;
+  country?: string;
+  subscribedAt?: Date;
   userId: string;
-  isCancelled: boolean;
-  cancelledAt?: Date;   // ✅ ADD THIS
+  status: CancelSubscriptionStatus;
+  cancelledAt?: Date;
   createdAt?: Date;
   updatedAt?: Date;
   description: string;
+  adminDescription?: string;
   plan?: string;
 }
 
@@ -46,17 +52,32 @@ const cancelSubscriptionSchema = new Schema<ICancelSubscription>(
       trim: true,
       lowercase: true,
     },
+    phoneNumber: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    country: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    subscribedAt: {
+      type: Date,
+      required: false,
+    },
     userId: {
       type: String,
       required: true,
       trim: true,
     },
-    isCancelled: {
-      type: Boolean,
+    status: {
+      type: String,
+      enum: ["pending", "retained", "cancelled"],
       required: true,
-      default: false,
+      default: "pending",
     },
-    cancelledAt: {          // ✅ ADD THIS
+    cancelledAt: {
       type: Date,
       required: false,
     },
@@ -64,6 +85,12 @@ const cancelSubscriptionSchema = new Schema<ICancelSubscription>(
       type: String,
       required: false,
       trim: true,
+    },
+    adminDescription: {
+      type: String,
+      required: false,
+      trim: true,
+      default: "",
     },
   },
   { timestamps: true }

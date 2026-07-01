@@ -6,6 +6,7 @@ import Payment from "../models/Payment";
 import User from "../../UserModule/models/User";
 import PaymentController from "./paymentController";
 import { NgeniusService } from "../../../services/ngenius.service";
+import { PushNotificationService } from "../../../services/pushNotification.service";
 
 const router = Router();
 
@@ -185,6 +186,7 @@ router.post("/ngenius", async (req: Request, res: Response) => {
 
           // Store transaction details
           if (paymentDetails.id) {
+            payment.transactionId = paymentDetails.id;
             payment.invoiceId = paymentDetails.id;
           }
 
@@ -246,6 +248,18 @@ router.post("/ngenius", async (req: Request, res: Response) => {
           payment.billingAttempt = (payment.billingAttempt || 0) + 1;
 
           await payment.save();
+
+          if (payment.userId) {
+            PushNotificationService.sendPaymentStatus(String(payment.userId), {
+              success: false,
+              amount: Number(payment.amount || 0),
+              currency: String(payment.currency || ""),
+              plan: String(payment.plan || ""),
+              invoiceId: String(payment.invoiceId || payment.transactionId || ""),
+            }).catch((pushError: any) => {
+              console.error("❌ Failed to send nGenius payment-failed push notification:", pushError?.message || pushError);
+            });
+          }
 
           // Handle recurring payment failure
           if (payment.isRecurring && payment.userId) {

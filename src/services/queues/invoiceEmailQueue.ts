@@ -13,6 +13,7 @@ export interface InvoiceEmailJob {
   date: string; // Serialized as string for Bull queue
   subscriptionEndDate: string; // Serialized as string for Bull queue
   paymentMethod: string;
+  taxRate?: number;
   invoicePDF: string; // Base64 encoded PDF string
 }
 

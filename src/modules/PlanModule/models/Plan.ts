@@ -23,19 +23,50 @@ const PlanSchema = new Schema<IPlanDocument>(
       default: "",
     },
 
+    services: {
+      type: [String],
+      default: [],
+    },
+
+    serviceClassCounts: {
+      type: [
+        {
+          service: {
+            type: String,
+            required: true,
+            trim: true,
+          },
+          classCountPerMonth: {
+            type: Number,
+            required: true,
+            min: 0,
+            default: 0,
+          },
+        },
+      ],
+      default: [],
+    },
+
+    classCountPerMonth: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
     features: {
       type: [String],
-      required: true,
+      default: [],
     },
 
     image: {
       type: String,
-      required: true,
+      default: "/images/basic-plan.svg",
     },
 
     price: {
       type: Number,
-      default: 0, // optional
+      min: 0,
+      default: 0,
     },
 
     isActive: {

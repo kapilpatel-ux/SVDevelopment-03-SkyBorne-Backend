@@ -36,8 +36,10 @@ const RegisterValidationSchema = yup.object({
       otherwise: (schema) => schema.notRequired().nullable(),
     }),
 
-    // COUNTRY
+    // COUNTRY / LOCATION
     // country: yup.string().required("Country is required"),
+    state: yup.string().trim().notRequired(),
+    city: yup.string().trim().notRequired(),
 
     // PHONE NUMBER
     phoneNumber: yup

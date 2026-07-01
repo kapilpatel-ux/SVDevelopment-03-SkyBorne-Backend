@@ -5,22 +5,87 @@ import { SendEmailCommand } from "@aws-sdk/client-ses";
 import sesClient from '../../../config/ses';
 import sgMail from "@sendgrid/mail";
 
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY || "";
+const canUseSendGrid = Boolean(SENDGRID_API_KEY && SENDGRID_API_KEY.startsWith("SG."));
 
-sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
+if (canUseSendGrid) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+} else if (SENDGRID_API_KEY) {
+  logger.warn("SendGrid key is present but does not start with SG.; falling back to SMTP/SES for OTP emails");
+}
 
 
 export class OTPService {
   private static readonly OTP_PREFIX = 'otp:';
   private static readonly OTP_EXPIRY = 3600; // 1 hour
+  private static readonly memoryOtpStore = new Map<
+    string,
+    { otp: string; expiresAt: number }
+  >();
+
+  private static canUseRedis(): boolean {
+    // Avoid hard failures when Redis is unavailable in local/dev environments.
+    return Boolean((redisClient as any)?.isReady);
+  }
+
+  private static memoryKey(email: string): string {
+    return `${this.OTP_PREFIX}${email}`;
+  }
+
+  private static setInMemory(email: string, otp: string): void {
+    const key = this.memoryKey(email);
+    this.memoryOtpStore.set(key, {
+      otp,
+      expiresAt: Date.now() + this.OTP_EXPIRY * 1000,
+    });
+  }
+
+  private static getFromMemory(email: string): string | null {
+    const key = this.memoryKey(email);
+    const record = this.memoryOtpStore.get(key);
+    if (!record) return null;
+    if (Date.now() > record.expiresAt) {
+      this.memoryOtpStore.delete(key);
+      return null;
+    }
+    return record.otp;
+  }
+
+  private static delFromMemory(email: string): void {
+    this.memoryOtpStore.delete(this.memoryKey(email));
+  }
+
+  private static ttlFromMemory(email: string): number {
+    const key = this.memoryKey(email);
+    const record = this.memoryOtpStore.get(key);
+    if (!record) return 0;
+    const remainingMs = record.expiresAt - Date.now();
+    if (remainingMs <= 0) {
+      this.memoryOtpStore.delete(key);
+      return 0;
+    }
+    return Math.ceil(remainingMs / 1000);
+  }
 
   /**
    * Generate and store OTP
    */
   static async generateAndStoreOTP(email: string): Promise<string> {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const key = `${this.OTP_PREFIX}${email}`;
+    const key = this.memoryKey(email);
 
-    await redisClient.setEx(key, this.OTP_EXPIRY, otp);
+    if (this.canUseRedis()) {
+      try {
+        await redisClient.setEx(key, this.OTP_EXPIRY, otp);
+      } catch (err: any) {
+        logger.error(
+          `Redis setEx failed for ${this.maskEmail(email)} | Falling back to memory | Error: ${err?.message || err}`
+        );
+        this.setInMemory(email, otp);
+      }
+    } else {
+      this.setInMemory(email, otp);
+    }
 
     logger.info(`OTP generated for email: ${this.maskEmail(email)}`);
     return otp;
@@ -76,11 +141,23 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
       `,
     };
 
-    const response = await sgMail.send(msg);
+    if (canUseSendGrid) {
+      const response = await sgMail.send(msg);
 
-    logger.info(
-      `OTP Email sent to: ${this.maskEmail(email)} | MessageID: ${response[0].headers["x-message-id"]}`
-    );
+      logger.info(
+        `OTP Email sent to: ${this.maskEmail(email)} | MessageID: ${response[0].headers["x-message-id"]}`
+      );
+      return;
+    }
+
+    await this.transporter.sendMail({
+      from: "Skyborne <info@skybornedrop.com>",
+      to: email,
+      subject: "Your Skyborne Verification Code",
+      html: msg.html,
+    });
+
+    logger.info(`OTP Email sent via SMTP to: ${this.maskEmail(email)}`);
 
   } catch (err: any) {
     logger.error(
@@ -105,8 +182,21 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
    * Verify OTP
    */
   static async verifyOTP(email: string, otp: string): Promise<boolean> {
-    const key = `${this.OTP_PREFIX}${email}`;
-    const storedOTP = await redisClient.get(key);
+    const key = this.memoryKey(email);
+    let storedOTP: string | null = null;
+
+    if (this.canUseRedis()) {
+      try {
+        storedOTP = await redisClient.get(key);
+      } catch (err: any) {
+        logger.error(
+          `Redis get failed for ${this.maskEmail(email)} | Falling back to memory | Error: ${err?.message || err}`
+        );
+        storedOTP = this.getFromMemory(email);
+      }
+    } else {
+      storedOTP = this.getFromMemory(email);
+    }
 
     if (!storedOTP) {
       logger.warn(`OTP expired or not found for: ${this.maskEmail(email)}`);
@@ -114,7 +204,16 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
     }
 
     if (storedOTP === otp) {
-      await redisClient.del(key);
+      if (this.canUseRedis()) {
+        try {
+          await redisClient.del(key);
+        } catch (err: any) {
+          logger.error(
+            `Redis del failed for ${this.maskEmail(email)} | Error: ${err?.message || err}`
+          );
+        }
+      }
+      this.delFromMemory(email);
       logger.info(`OTP verified for: ${this.maskEmail(email)}`);
       return true;
     }
@@ -127,8 +226,17 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
    * Resend OTP
    */
   static async resendOTP(email: string): Promise<string> {
-    const key = `${this.OTP_PREFIX}${email}`;
-    await redisClient.del(key);
+    const key = this.memoryKey(email);
+    if (this.canUseRedis()) {
+      try {
+        await redisClient.del(key);
+      } catch (err: any) {
+        logger.error(
+          `Redis del failed for ${this.maskEmail(email)} | Error: ${err?.message || err}`
+        );
+      }
+    }
+    this.delFromMemory(email);
 
     const otp = await this.generateAndStoreOTP(email);
     await this.sendEmailOTP(email, otp);
@@ -139,9 +247,20 @@ static async sendEmailOTP(email: string, otp: string): Promise<void> {
 
   /** Remaining time */
   static async getOTPRemainingTime(email: string): Promise<number> {
-    const key = `${this.OTP_PREFIX}${email}`;
-    const ttl = await redisClient.ttl(key);
-    return ttl > 0 ? ttl : 0;
+    const key = this.memoryKey(email);
+    if (this.canUseRedis()) {
+      try {
+        const ttl = await redisClient.ttl(key);
+        return ttl > 0 ? ttl : 0;
+      } catch (err: any) {
+        logger.error(
+          `Redis ttl failed for ${this.maskEmail(email)} | Falling back to memory | Error: ${err?.message || err}`
+        );
+        return this.ttlFromMemory(email);
+      }
+    }
+
+    return this.ttlFromMemory(email);
   }
 
   private static maskEmail(email: string): string {

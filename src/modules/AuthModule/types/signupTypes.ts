@@ -4,6 +4,8 @@ export interface SignupTypes {
   email: string;
   password: string;
   country: string;
+  state?: string;
+  city?: string;
   role?: string;
   motivation?: string | null;
   ip: string;

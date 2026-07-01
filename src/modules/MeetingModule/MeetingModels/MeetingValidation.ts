@@ -32,10 +32,6 @@ export const CreateMeetingSchema = Yup.object({
     .min(30, "Duration must be at least 30 minutes")
     .max(480, "Duration cannot exceed 8 hours"),
   
-  autoRecording: Yup.boolean()
-    .required("Auto recording option is required"),
-  
-  rotationEnabled: Yup.boolean(),
 
   startDate: Yup.string()
     .required("Start date is required")
@@ -92,3 +88,26 @@ export const UpcomingMeetingsSchema = Yup.object().shape({
     .default(0)
     .min(0, "Offset cannot be negative"),
 });
+
+// -----------------------------------------
+// SHARE MEETING LINK VALIDATION SCHEMA
+// -----------------------------------------
+export const ShareMeetingLinkSchema = Yup.object({
+  body: Yup.object({
+    meetingId: Yup.string()
+      .required("Meeting ID is required")
+      .trim(),
+  }),
+});
+
+// -----------------------------------------
+// REDIRECT MEETING VALIDATION SCHEMA
+// -----------------------------------------
+export const RedirectMeetingSchema = Yup.object({
+  body: Yup.object({
+    token: Yup.string()
+      .required("Token is required")
+      .trim(),
+  }),
+});
+

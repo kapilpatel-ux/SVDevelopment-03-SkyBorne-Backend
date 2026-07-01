@@ -118,6 +118,38 @@ async searchModels(payload: any) {
     .catch((err) => this.handleErrorMessage(err));
 }
 
+// In countryRepository
+async searchCountriesWithRegion(payload: any) {
+  const { search, skip = 0, limit = 10, filter, isActive = false } = payload;
+
+  const query: any = {};
+  if (isActive) {   
+    query.status = 'active';
+  }
+
+  if (search) {
+    query.$or = [
+      { name: { $regex: search, $options: "i" } },
+      { code: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  if (filter) {
+    const filterIds = filter.split(",").map((id: string) => id.trim());
+    query.region = { $in: filterIds };
+  }
+
+  return this.model
+    .find(query)
+    .populate('region') // ✅ Add populate here
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .then((data) => data)
+    .catch((err) => this.handleErrorMessage(err));
+}
+
+
 async getAll(payload: {
   search?: string;
   skip: number;

@@ -3,8 +3,11 @@ dotenv.config();
 
 import { emailQueue } from "../services/queues/emailQueue";
 import sgMail from "@sendgrid/mail";
+import { initConsoleErrorLogger } from "../utils/consoleLogger";
 
 
+
+initConsoleErrorLogger();
 
 sgMail.setApiKey(process.env.SENDGRID_API_KEY!);
 

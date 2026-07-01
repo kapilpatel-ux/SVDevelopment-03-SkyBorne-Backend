@@ -14,9 +14,15 @@ export const PaymentApiRoutes = [
     action: PaymentController.createPaymentOrder,
     method: "post",
   },
+  {
+    path: "/payment/upgrade-order",
+    request: null,
+    action: PaymentController.upgradePlanOrder,
+    method: "post",
+  },
     {
     path: "/payment/verify-mobile",
-    request: null,
+    requyoest: null,
     action: PaymentController.verifyMobilePayment,
     method: "post",
   },
@@ -35,7 +41,7 @@ export const PaymentApiRoutes = [
   },
   {
     path: "/payment/verify-payment",
-    action: PaymentController.me,
+    action: PaymentController.verifyPayment,
     request: null,
     method: "post",
   },
@@ -60,6 +66,12 @@ export const PaymentApiRoutes = [
     method: "get",
   },
   {
+    path: "/payment/admin/recurring-failures",
+    action: PaymentController.getAllRecurringPaymentFailures,
+    request: null,
+    method: "get",
+  },
+  {
   path: "/payment/admin/export",
   request: null,
   action: PaymentController.exportPaymentsCSV,
@@ -72,8 +84,38 @@ export const PaymentApiRoutes = [
     method: "post",
   },
   {
+    path: "/subscription/:userId/status",
+    action: PaymentController.updateCancelSubscriptionStatus,
+    request: null,
+    method: "patch",
+  },
+  {
     path: "/payment/admin/stats",
     action: PaymentController.getAdminPaymentStats,
+    request: null,
+    method: "get",
+  },
+  {
+    path: "/payment/card-details",
+    action: PaymentController.getCardDetails,
+    request: null,
+    method: "get",
+  },
+  {
+    path: "/payment/card-portal-session",
+    action: PaymentController.createCardPortalSession,
+    request: null,
+    method: "post",
+  },
+  {
+    path: "/payment/stripe-portal-return",
+    action: PaymentController.stripePortalReturn,
+    request: null,
+    method: "get",
+  },
+  {
+    path: "/payment/stripe-checkout-return",
+    action: PaymentController.stripeCheckoutReturn,
     request: null,
     method: "get",
   },

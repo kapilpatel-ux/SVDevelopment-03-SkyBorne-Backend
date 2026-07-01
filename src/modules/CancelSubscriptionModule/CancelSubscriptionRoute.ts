@@ -8,6 +8,12 @@ export const CancelSubscriptionRoute = [
     method: "get",
   },
   {
+    path: "/subscription/admin/export",
+    request: null,
+    action: CancelSubscriptionController.exportCancelSubscriptionsCSV,
+    method: "get",
+  },
+  {
     path: "/subscription/cancel-subscription",
     request: null,
     action: CancelSubscriptionController.create,

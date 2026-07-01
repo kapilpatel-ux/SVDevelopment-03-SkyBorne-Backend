@@ -19,6 +19,14 @@ interface RecurringPaymentConfig {
   retryDelayMs?: number;
 }
 
+type StripeClient = InstanceType<typeof Stripe>;
+type StripeSubscription = Awaited<
+  ReturnType<StripeClient["subscriptions"]["list"]>
+>["data"][number];
+type StripeCheckoutSession = Awaited<
+  ReturnType<StripeClient["checkout"]["sessions"]["retrieve"]>
+>;
+
 export class StripeService {
   private static stripe: Stripe;
   private static readonly DEFAULT_RECURRING_CONFIG: RecurringPaymentConfig = {
@@ -35,6 +43,13 @@ export class StripeService {
       throw new Error("STRIPE_SECRET_KEY is not defined");
     }
     this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+  }
+
+  private static getStripeClient(): Stripe {
+    if (!this.stripe) {
+      this.initialize();
+    }
+    return this.stripe;
   }
 
   /**
@@ -58,9 +73,10 @@ export class StripeService {
    */
   static async getCustomerSubscriptions(
     customerId: string,
-  ): Promise<Stripe.Subscription[]> {
+  ): Promise<StripeSubscription[]> {
     try {
-      const subscriptions = await this.stripe.subscriptions.list({
+      const stripe = this.getStripeClient();
+      const subscriptions = await stripe.subscriptions.list({
         customer: customerId,
         status: "active",
       });
@@ -138,7 +154,7 @@ export class StripeService {
         
   //       success_url:successUrl,
   //       cancel_url: cancelUrl,
-  //     } as Stripe.Checkout.SessionCreateParams);
+  //     });
 
   //     // Create payment record
   //     const payment = await Payment.create({
@@ -188,6 +204,10 @@ export class StripeService {
     userAmount: number,
     source: "app" | "web" = "web",
     billingType: "monthly" | "yearly" = "monthly",
+    customSuccessUrl?: string,
+    customCancelUrl?: string,
+    previousSubscriptionId?: string,
+    deferUntil?: Date,
   ): Promise<{
     checkoutUrl: string;
     sessionId: string;
@@ -201,33 +221,67 @@ export class StripeService {
       const user = await User.findById(userId);
       if (!user) throw new Error("User not found");
 
-      // ✅ NEW: Get user's country and determine local currency
+      const enableLocalCurrencyConversion =
+        String(process.env.STRIPE_ENABLE_LOCAL_CURRENCY_CONVERSION || "")
+          .trim()
+          .toLowerCase() === "true";
+
       const countryCode = user.countryCode || user.country || "US";
-      const currencyMapping = getCurrencyForCountry(countryCode);
-      const localCurrency = currencyMapping.stripeCurrency; // e.g., 'inr', 'aud', 'eur'
-      const localCurrencyCode = currencyMapping.currency; // e.g., 'INR', 'AUD', 'EUR'
+      const forceUsdCountries = String(
+        process.env.STRIPE_FORCE_USD_COUNTRIES || "AE",
+      )
+        .split(",")
+        .map((c) => c.trim().toUpperCase())
+        .filter(Boolean);
+      const forceUsdForUser = forceUsdCountries.includes(
+        String(countryCode || "").toUpperCase(),
+      );
 
-      // console.log(`💰 Processing payment for ${countryCode}:`, {
-      //   originalAmount: amount,
-      //   originalCurrency: currency,
-      //   targetCurrency: localCurrencyCode,
-      //   user: user.email,
-      // });
+      // Default behavior: charge in the currency requested by the client (typically USD).
+      // When local conversion is enabled, convert USD -> local currency based on user country.
+      let localCurrency = String(currency || "USD").toLowerCase();
+      let localCurrencyCode = String(currency || "USD").toUpperCase();
 
-      // ✅ NEW: Convert amount from USD to local currency
-      // ✅ Convert amount from USD → local currency
       let localAmount = amount;
       let conversionRate = 1;
 
-      if (currency !== localCurrencyCode) {
-        const result = await convertUsingDB(
-          amount,
-          currency,
-          localCurrencyCode,
-        );
+      // Stripe cannot create subscriptions with mixed currencies under the same customer.
+      // If the user already has a Stripe subscription, keep the currency consistent to
+      // avoid "You cannot combine currencies on a single customer".
+      const existingSubscriptionCurrencyCode =
+        await this.getExistingSubscriptionCurrencyCode(user);
 
-        localAmount = result.convertedAmount;
-        conversionRate = result.rate;
+      if (existingSubscriptionCurrencyCode) {
+        localCurrencyCode = existingSubscriptionCurrencyCode.toUpperCase();
+        localCurrency = existingSubscriptionCurrencyCode.toLowerCase();
+
+        if (String(currency || "").toUpperCase() !== localCurrencyCode) {
+          const result = await convertUsingDB(
+            amount,
+            String(currency || "USD").toUpperCase(),
+            localCurrencyCode,
+          );
+          localAmount = result.convertedAmount;
+          conversionRate = result.rate;
+        }
+      } else if (forceUsdForUser) {
+        localCurrencyCode = "USD";
+        localCurrency = "usd";
+      } else if (enableLocalCurrencyConversion) {
+        const currencyMapping = getCurrencyForCountry(countryCode);
+        localCurrency = currencyMapping.stripeCurrency;
+        localCurrencyCode = currencyMapping.currency;
+
+        if (String(currency || "").toUpperCase() !== localCurrencyCode) {
+          const result = await convertUsingDB(
+            amount,
+            String(currency || "USD").toUpperCase(),
+            localCurrencyCode,
+          );
+
+          localAmount = result.convertedAmount;
+          conversionRate = result.rate;
+        }
       }
 
       // ✅ NEW: Format amount for Stripe (multiply by 100 for most currencies, except JPY)
@@ -235,21 +289,76 @@ export class StripeService {
 
       const orderRef = `STR-${Date.now()}`;
       const billingInterval = this.getBillingInterval(billingType);
-      
+      const appSuccessUrl = customSuccessUrl || process.env.APP_PAYMENT_SUCCESS_URL;
+      const appCancelUrl = customCancelUrl || process.env.APP_PAYMENT_CANCEL_URL;
+      const webSuccessUrl = process.env.WEB_PAYMENT_SUCCESS_URL || `${process.env.FRONTEND_URL}/payment-success?sessionId={CHECKOUT_SESSION_ID}`;
+      const webCancelUrl = process.env.WEB_PAYMENT_CANCEL_URL || `${process.env.FRONTEND_URL}/payment-failed`;
+
+      if (source === "app" && (!appSuccessUrl || !appCancelUrl)) {
+        throw new Error(
+          "Missing app Stripe redirect URLs. Set APP_PAYMENT_SUCCESS_URL and APP_PAYMENT_CANCEL_URL.",
+        );
+      }
+
+      if (source === "web" && (!webSuccessUrl || !webCancelUrl)) {
+        throw new Error(
+          "Missing web Stripe redirect URLs. Set WEB_PAYMENT_SUCCESS_URL/WEB_PAYMENT_CANCEL_URL or FRONTEND_URL.",
+        );
+      }
+
+      const apiBaseUrl = String(process.env.API_BASE_URL || "").trim();
+      const appCheckoutReturnSuccessUrl = apiBaseUrl
+        ? `${apiBaseUrl}/payment/stripe-checkout-return?dest=app&status=success&session_id={CHECKOUT_SESSION_ID}`
+        : undefined;
+      const appCheckoutReturnCancelUrl = apiBaseUrl
+        ? `${apiBaseUrl}/payment/stripe-checkout-return?dest=app&status=cancel&session_id={CHECKOUT_SESSION_ID}`
+        : undefined;
+
+      const isHttpUrl = (value?: string) =>
+        Boolean(value && /^https?:\/\//i.test(String(value).trim()));
+
       const successUrl =
         source === "app"
-          ? "skybornedrop://payment-processing" 
-          : `${process.env.FRONTEND_URL}/payment-success?sessionId={CHECKOUT_SESSION_ID}`;
-
+          ? (isHttpUrl(customSuccessUrl) ? customSuccessUrl : appCheckoutReturnSuccessUrl || appSuccessUrl)
+          : webSuccessUrl;
       const cancelUrl =
         source === "app"
-          ? "skybornedrop://payment-processing"
-          : `${process.env.FRONTEND_URL}/payment-failed`;
+          ? (isHttpUrl(customCancelUrl) ? customCancelUrl : appCheckoutReturnCancelUrl || appCancelUrl)
+          : webCancelUrl;
 
-      // Create checkout session with LOCAL CURRENCY
-      const session = await this.stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "subscription",
+      // Always use a consistent Stripe customer id (reuse if exists, else create once).
+      const customerId = await this.getOrCreateCustomer(user);
+      const metadata: Record<string, string> = {
+        userId,
+        plan,
+        orderRef,
+        userAmount: userAmount.toString(),
+        billingType,
+        localAmount: localAmount.toString(),
+        currency: localCurrencyCode,
+        originalCurrency: String(currency || "USD").toUpperCase(),
+        conversionRate: conversionRate.toString(),
+      };
+
+      if (previousSubscriptionId) {
+        metadata.previousSubscriptionId = previousSubscriptionId;
+      }
+
+      let deferredAnchorUnix: number | null = null;
+      if (deferUntil) {
+        const trialEndMs = deferUntil.getTime();
+        const trialEndUnix = Math.floor(trialEndMs / 1000);
+        const nowUnix = Math.floor(Date.now() / 1000);
+        if (trialEndUnix > nowUnix + 60) {
+          deferredAnchorUnix = trialEndUnix;
+          metadata.deferUntil = new Date(trialEndMs).toISOString();
+          metadata.deferredCharge = "true";
+        }
+      }
+
+      const sessionCreateParams = {
+        payment_method_types: ["card" as const],
+        mode: "subscription" as const,
         line_items: [
           {
             price_data: {
@@ -267,32 +376,38 @@ export class StripeService {
             quantity: 1,
           },
         ],
-        customer_email: user.email,
-        metadata: {
-          userId,
-          plan,
-          orderRef,
-          userAmount: userAmount.toString(),
-          billingType,
-          localAmount: localAmount.toString(), // ✅ NEW: Store converted amount
-          currency: localCurrencyCode,         // ✅ NEW: Store local currency
-          originalCurrency: currency,          // ✅ NEW: Store original currency
-          conversionRate: conversionRate.toString(), // ✅ NEW: Store conversion rate
-        },
+        metadata,
         success_url: successUrl,
         cancel_url: cancelUrl,
-      } as Stripe.Checkout.SessionCreateParams);
+        customer: customerId,
+        ...(deferredAnchorUnix
+          ? {
+              subscription_data: {
+                billing_cycle_anchor: deferredAnchorUnix,
+                proration_behavior: "none" as const,
+              },
+            }
+          : {}),
+      };
+
+      // Create checkout session with LOCAL CURRENCY
+      const session = await this.stripe.checkout.sessions.create(
+        sessionCreateParams,
+      );
 
       // Create payment record with both amounts
       const payment = await Payment.create({
         userId,
         orderRef,
         reference: session.id,
-        amount: userAmount,              // Original USD amount
+        // Base amount/currency (what the user selected; typically USD in app)
+        amount: userAmount,
         localAmount: localAmount,        // ✅ NEW: Converted local amount
-        currency: localCurrencyCode,     // ✅ CHANGED: Store local currency
+        localCurrency: localCurrencyCode,
+        currency: String(currency || "USD").toUpperCase(),
         plan,
         billingType,
+        previousSubscriptionId: previousSubscriptionId || undefined,
         status: "PENDING",
         gateway: "stripe",
         paymentIntentId: session.id,
@@ -304,7 +419,7 @@ export class StripeService {
         metadata: {                      // ✅ NEW: Store conversion metadata
           countryCode,
           conversionRate,
-          originalCurrency: currency,
+          originalCurrency: String(currency || "USD").toUpperCase(),
         },
       });
 
@@ -327,7 +442,7 @@ export class StripeService {
    */
   static async getCheckoutSession(
     sessionId: string,
-  ): Promise<Stripe.Checkout.Session> {
+  ): Promise<StripeCheckoutSession> {
     try {
       const session = await this.stripe.checkout.sessions.retrieve(sessionId);
       return session;
@@ -386,31 +501,420 @@ export class StripeService {
   /**
    * Get or create a Stripe customer for a user
    */
+  private static async getExistingCustomer(user: any): Promise<string | null> {
+    const stripe = this.getStripeClient();
+    const setAndReturnCustomerId = async (customerId: string) => {
+      if (!customerId) return customerId;
+      if (user.stripeCustomerId !== customerId) {
+        user.stripeCustomerId = customerId;
+        await user.save();
+      }
+      return customerId;
+    };
+
+    if (user.stripeCustomerId) {
+      try {
+        const existing = await stripe.customers.retrieve(user.stripeCustomerId);
+        if (!existing.deleted) {
+          return user.stripeCustomerId;
+        }
+      } catch (error: any) {
+        const notFound =
+          error?.statusCode === 404 ||
+          error?.code === "resource_missing" ||
+          String(error?.message || "").toLowerCase().includes("no such customer");
+        if (!notFound) {
+          throw error;
+        }
+        console.warn(
+          `⚠️ Invalid Stripe customerId (${user.stripeCustomerId}) for user ${user._id}.`,
+        );
+      }
+    }
+
+    // Recover customer from subscription if available (find existing only).
+    if (user.stripeSubscriptionId) {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+        const subscriptionCustomer = subscription.customer;
+        const customerId =
+          typeof subscriptionCustomer === "string"
+            ? subscriptionCustomer
+            : subscriptionCustomer?.id || "";
+
+        if (customerId) {
+          const existing = await stripe.customers.retrieve(customerId);
+          if (!existing.deleted) {
+            return await setAndReturnCustomerId(customerId);
+          }
+        }
+      } catch (error: any) {
+        console.warn(
+          `⚠️ Unable to recover customer from subscription (${user.stripeSubscriptionId}) for user ${user._id}:`,
+          error?.message || error,
+        );
+      }
+    }
+
+    return null;
+  }
+
+  private static async getExistingSubscriptionCurrencyCode(
+    user: any,
+  ): Promise<string | null> {
+    const stripe = this.getStripeClient();
+
+    // Fast path: stored subscription id
+    if (user?.stripeSubscriptionId) {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+        const priceCurrency =
+          subscription.items?.data?.[0]?.price?.currency ||
+          (subscription.items?.data?.[0] as any)?.plan?.currency;
+        if (priceCurrency) return String(priceCurrency).toUpperCase();
+      } catch (error: any) {
+        const notFound =
+          error?.statusCode === 404 ||
+          error?.code === "resource_missing" ||
+          String(error?.message || "").toLowerCase().includes("no such subscription");
+        if (!notFound) {
+          console.warn(
+            `⚠️ Unable to read Stripe subscription (${user?.stripeSubscriptionId}) for user ${user?._id}:`,
+            error?.message || error,
+          );
+        }
+      }
+    }
+
+    const customerId = await this.getExistingCustomer(user);
+    if (!customerId) return null;
+
+    try {
+      // Grab any subscription currency for this customer (we only need one)
+      const subs = await stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 1,
+      });
+      const sub = subs.data?.[0];
+      const priceCurrency =
+        sub?.items?.data?.[0]?.price?.currency ||
+        (sub?.items?.data?.[0] as any)?.plan?.currency;
+      if (priceCurrency) return String(priceCurrency).toUpperCase();
+    } catch (error: any) {
+      console.warn(
+        `⚠️ Unable to list Stripe subscriptions for customer ${customerId}:`,
+        error?.message || error,
+      );
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolve an existing Stripe customer id for a user without creating a new customer.
+   */
+  static async resolveExistingCustomerId(user: any): Promise<string | null> {
+    return this.getExistingCustomer(user);
+  }
+
   static async getOrCreateCustomer(user: any): Promise<string> {
     try {
-      // Check if user already has a Stripe customer ID
-      if (user.stripeCustomerId) {
-        return user.stripeCustomerId;
+      const stripe = this.getStripeClient();
+      const createNewCustomer = async () => {
+        const customer = await stripe.customers.create({
+          email: user.email,
+          name: `${user.firstName} ${user.lastName}`,
+          metadata: {
+            userId: user._id.toString(),
+          },
+        });
+
+        user.stripeCustomerId = customer.id;
+        await user.save();
+        return customer.id;
+      };
+      const existingCustomerId = await this.getExistingCustomer(user);
+      if (existingCustomerId) {
+        return existingCustomerId;
       }
 
-      // Create new customer
-      const customer = await this.stripe.customers.create({
-        email: user.email,
-        name: `${user.firstName} ${user.lastName}`,
-        metadata: {
-          userId: user._id.toString(),
-        },
-      });
-
-      // Save customer ID to user
-      user.stripeCustomerId = customer.id;
-      await user.save();
-
-      return customer.id;
+      return await createNewCustomer();
     } catch (error) {
       console.error("❌ Error creating Stripe customer:", error);
       throw error;
     }
+  }
+
+  static async getDefaultCardDetails(user: any) {
+    const stripe = this.getStripeClient();
+    const customerId = await this.getExistingCustomer(user);
+
+    if (!customerId) {
+      return {
+        customerId: "",
+        hasCard: false,
+        card: null,
+        billingDetails: {
+          name: "",
+          email: "",
+          phone: "",
+          address: {
+            line1: "",
+            line2: "",
+            city: "",
+            state: "",
+            postal_code: "",
+            country: "",
+          },
+        },
+      };
+    }
+
+    const customer = await stripe.customers.retrieve(customerId);
+    if (customer.deleted) {
+      throw new Error("Stripe customer not found");
+    }
+
+    let defaultPaymentMethodId =
+      typeof customer.invoice_settings?.default_payment_method === "string"
+        ? customer.invoice_settings.default_payment_method
+        : customer.invoice_settings?.default_payment_method?.id || null;
+
+    // Fallback 1: subscription-level default payment method
+    if (!defaultPaymentMethodId && user?.stripeSubscriptionId) {
+      try {
+        const subscription = await stripe.subscriptions.retrieve(
+          user.stripeSubscriptionId,
+        );
+        const subPm = (subscription as any)?.default_payment_method;
+        defaultPaymentMethodId =
+          typeof subPm === "string" ? subPm : subPm?.id || null;
+      } catch (error: any) {
+        console.warn(
+          `⚠️ Failed to resolve default payment method from subscription (${user?.stripeSubscriptionId}) for user ${user?._id}:`,
+          error?.message || error,
+        );
+      }
+    }
+
+    // Fallback 2: any attached card payment method
+    if (!defaultPaymentMethodId) {
+      try {
+        const paymentMethods = await stripe.paymentMethods.list({
+          customer: customerId,
+          type: "card",
+        });
+        defaultPaymentMethodId = paymentMethods?.data?.[0]?.id || null;
+      } catch (error: any) {
+        console.warn(
+          `⚠️ Failed to list card payment methods for customer ${customerId}:`,
+          error?.message || error,
+        );
+      }
+    }
+
+    if (!defaultPaymentMethodId) {
+      return {
+        customerId,
+        hasCard: false,
+        card: null,
+        billingDetails: {
+          name: customer.name || "",
+          email: customer.email || "",
+          phone: customer.phone || "",
+          address: {
+            line1: "",
+            line2: "",
+            city: "",
+            state: "",
+            postal_code: "",
+            country: "",
+          },
+        },
+      };
+    }
+
+    const paymentMethod = await stripe.paymentMethods.retrieve(defaultPaymentMethodId);
+    const details = (paymentMethod.billing_details || {}) as any;
+    const address = (details.address || {}) as any;
+    const card = paymentMethod.card;
+
+    return {
+      customerId,
+      hasCard: Boolean(card),
+      card: card
+        ? {
+            paymentMethodId: paymentMethod.id,
+            brand: card.brand,
+            last4: card.last4,
+            expMonth: card.exp_month,
+            expYear: card.exp_year,
+            funding: card.funding || null,
+          }
+        : null,
+      billingDetails: {
+        name: details.name || customer.name || "",
+        email: details.email || customer.email || "",
+        phone: details.phone || customer.phone || "",
+        address: {
+          line1: address.line1 || "",
+          line2: address.line2 || "",
+          city: address.city || "",
+          state: address.state || "",
+          postal_code: address.postal_code || "",
+          country: address.country || "",
+        },
+      },
+    };
+  }
+
+  static async createCardSetupIntent(user: any) {
+    const stripe = this.getStripeClient();
+    const customerId = await this.getExistingCustomer(user);
+    if (!customerId) {
+      throw new Error("No existing Stripe customer found for this user");
+    }
+    const setupIntent = await stripe.setupIntents.create({
+      customer: customerId,
+      payment_method_types: ["card"],
+      usage: "off_session",
+    });
+    return {
+      customerId,
+      clientSecret: setupIntent.client_secret,
+      setupIntentId: setupIntent.id,
+    };
+  }
+
+  static async createCardUpdatePortalSession(user: any, returnUrl?: string) {
+    const stripe = this.getStripeClient();
+    const customerId = await this.getExistingCustomer(user);
+    if (!customerId) {
+      throw new Error("No existing Stripe customer found for this user");
+    }
+    const fallbackReturnUrl = `${process.env.FRONTEND_URL || ""}/payments`;
+    const safeReturnUrl =
+      typeof returnUrl === "string" && /^https?:\/\//i.test(returnUrl)
+        ? returnUrl
+        : fallbackReturnUrl;
+
+    // Force the "payment method update" flow so the portal doesn't show subscription
+    // management actions (e.g., cancel subscription).
+    const configurationId = String(
+      process.env.STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID || "",
+    ).trim();
+
+    // To fully hide invoice history / subscriptions, you must use a Billing Portal
+    // configuration with those features disabled.
+    if (!configurationId) {
+      const allowDefaultPortal = /^(1|true|yes)$/i.test(
+        String(process.env.STRIPE_ALLOW_DEFAULT_BILLING_PORTAL_FOR_CARD_UPDATE || ""),
+      );
+
+      if (!allowDefaultPortal) {
+        throw new Error(
+          "Missing Stripe billing portal configuration. Set STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID to a Billing Portal configuration with invoice history and subscription cancellation disabled.",
+        );
+      }
+
+      console.warn(
+        "⚠️  [StripeService.createCardUpdatePortalSession] STRIPE_BILLING_PORTAL_CONFIGURATION_CARD_UPDATE_ID is not set; creating session without configuration because STRIPE_ALLOW_DEFAULT_BILLING_PORTAL_FOR_CARD_UPDATE is enabled.",
+      );
+    }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: customerId,
+      ...(configurationId ? { configuration: configurationId } : {}),
+      flow_data: {
+        type: "payment_method_update",
+        after_completion: {
+          type: "redirect",
+          redirect: { return_url: safeReturnUrl },
+        },
+      },
+      // Keep return_url for backward-compatibility with older portal behavior.
+      return_url: safeReturnUrl,
+    } as any);
+
+    return {
+      customerId,
+      url: session.url,
+    };
+  }
+
+  static async setDefaultPaymentMethodForUser(
+    user: any,
+    paymentMethodId: string,
+    billingDetails?: {
+      name?: string;
+      email?: string;
+      phone?: string;
+      address?: {
+        line1?: string;
+        line2?: string;
+        city?: string;
+        state?: string;
+        postal_code?: string;
+        country?: string;
+      };
+    },
+  ) {
+    const stripe = this.getStripeClient();
+    const customerId = await this.getExistingCustomer(user);
+    if (!customerId) {
+      throw new Error("No existing Stripe customer found for this user");
+    }
+
+    // Ensure payment method is attached to this customer.
+    const existingPaymentMethod = await stripe.paymentMethods.retrieve(paymentMethodId);
+    const currentCustomer =
+      typeof existingPaymentMethod.customer === "string"
+        ? existingPaymentMethod.customer
+        : existingPaymentMethod.customer?.id || null;
+
+    if (!currentCustomer) {
+      await stripe.paymentMethods.attach(paymentMethodId, { customer: customerId });
+    } else if (currentCustomer !== customerId) {
+      throw new Error("Payment method belongs to a different customer");
+    }
+
+    if (billingDetails) {
+      await stripe.paymentMethods.update(paymentMethodId, {
+        billing_details: {
+          name: billingDetails.name,
+          email: billingDetails.email,
+          phone: billingDetails.phone,
+          address: billingDetails.address,
+        },
+      });
+    }
+
+    await stripe.customers.update(customerId, {
+      invoice_settings: {
+        default_payment_method: paymentMethodId,
+      },
+      name: billingDetails?.name || undefined,
+      email: billingDetails?.email || undefined,
+      phone: billingDetails?.phone || undefined,
+      address: billingDetails?.address || undefined,
+    });
+
+    if (user.stripeSubscriptionId) {
+      try {
+        await stripe.subscriptions.update(user.stripeSubscriptionId, {
+          default_payment_method: paymentMethodId,
+        });
+      } catch (error) {
+        console.warn("⚠️ Failed to update Stripe subscription default payment method:", error);
+      }
+    }
+
+    return this.getDefaultCardDetails(user);
   }
 
   /**
@@ -544,8 +1048,9 @@ export class StripeService {
         orderRef,
         reference: paymentIntent.id,
         amount: userAmount,
-        localAmount: localAmount, // ✅ FIXED
-        currency: localCurrencyCode, // ✅ FIXED
+        localAmount: localAmount,
+        localCurrency: localCurrencyCode,
+        currency: String(currency || "USD").toUpperCase(),
         plan,
         billingType,
         status: "PENDING",
@@ -643,104 +1148,215 @@ export class StripeService {
   }
 
   /**
-   * Charge recurring payment using saved payment method
-   * Supports both monthly and yearly billing cycles
+   * Upgrade/downgrade an existing Stripe subscription while keeping the same subscription ID.
    */
-  static async chargeRecurringPayment(
+  static async upgradeSubscriptionPlan(
     userId: string,
-    plan: string,
-    amount: number, // in cents
+    subscriptionId: string,
+    amount: number,
     currency: string,
+    plan: string,
     billingType: "monthly" | "yearly" = "monthly",
-    retryAttempt = 0,
-    config = this.DEFAULT_RECURRING_CONFIG,
-  ): Promise<void> {
+  ): Promise<{
+    subscriptionId: string;
+    amount: number;
+    currency: string;
+    localAmount: number;
+    localCurrency: string;
+    plan: string;
+    billingType: "monthly" | "yearly";
+    currentPeriodEnd: Date | null;
+  }> {
     try {
+      const stripe = this.getStripeClient();
       const user = await User.findById(userId);
-      if (!user || !user.plan) {
-        throw new Error(`User ${userId} not found or has no plan`);
+      if (!user) throw new Error("User not found");
+
+      const existingSubscription = await stripe.subscriptions.retrieve(
+        subscriptionId,
+      );
+
+      const existingItem = existingSubscription.items?.data?.[0];
+      if (!existingItem?.id) {
+        throw new Error("Stripe subscription item not found for upgrade");
       }
 
-      const customerId = await this.getOrCreateCustomer(user);
-      const orderRef = `STR-REC-${Date.now()}`;
+      const existingPrice = existingItem.price;
+      const detectedCurrency =
+        typeof existingPrice === "string"
+          ? ""
+          : String(existingPrice?.currency || "").toLowerCase();
+      if (!detectedCurrency) {
+        throw new Error("Unable to determine existing subscription currency");
+      }
+      const existingStripeCurrency = detectedCurrency;
+      const existingCurrencyCode = existingStripeCurrency.toUpperCase();
 
-      // Get default payment method
-      const paymentMethods = await this.stripe.paymentMethods.list({
-        customer: customerId,
-        type: "card",
-      });
-
-      if (paymentMethods.data.length === 0) {
-        throw new Error("No payment method on file");
+      let localAmount = amount;
+      const inputCurrencyCode = String(currency || "USD").toUpperCase();
+      if (inputCurrencyCode !== existingCurrencyCode) {
+        const result = await convertUsingDB(
+          amount,
+          inputCurrencyCode,
+          existingCurrencyCode,
+        );
+        localAmount = result.convertedAmount;
       }
 
-      const defaultPaymentMethod = paymentMethods.data[0];
+      const stripeAmount = formatAmountForStripe(localAmount, existingCurrencyCode);
+      const billingInterval = this.getBillingInterval(billingType);
 
-      // Create invoice for recurring charge
-      const paymentIntent = await this.stripe.paymentIntents.create({
-        customer: customerId,
-        amount: Math.round(amount * 100),
-        currency: currency.toLowerCase(),
-        payment_method: defaultPaymentMethod.id,
-        off_session: true,
-        confirm: true,
-        description: `Recurring charge for ${plan} (${billingType})`,
+      const newPrice = await stripe.prices.create({
+        currency: existingStripeCurrency,
+        unit_amount: stripeAmount,
+        recurring: { interval: billingInterval, interval_count: 1 },
+        product_data: {
+          name: `${plan.charAt(0).toUpperCase() + plan.slice(1)} Plan`,
+        },
         metadata: {
-          userId: userId,
+          userId,
+          subscriptionId,
           plan,
           billingType,
-          orderRef,
-          isRecurring: "true",
+          originalCurrency: inputCurrencyCode,
+          originalAmount: amount.toString(),
+          localCurrency: existingCurrencyCode,
+          localAmount: localAmount.toString(),
         },
       });
 
-      // Create payment record
-      const payment = await Payment.create({
-        userId,
-        orderRef,
-        reference: paymentIntent.id,
-        amount: amount / 100,
-        localAmount: amount / 100,
-        currency,
-        plan,
-        billingType,
-        status: "PENDING",
-        gateway: "stripe",
-        paymentIntentId: paymentIntent.id,
-        isRecurring: true,
-        recurringCycle: this.getMonthlyRecurringCycle(),
-        billingAttempt: retryAttempt + 1,
-        gatewayResponse: { paymentIntentId: paymentIntent.id },
-      });
-
-      // Verify payment after delay
-      setTimeout(() => {
-        this.verifyRecurringPayment(paymentIntent.id, userId, plan, billingType);
-      }, 3000);
-    } catch (error) {
-      console.error(
-        `❌ Recurring payment charge failed (Attempt ${retryAttempt + 1}):`,
-        error,
-      );
-
-      if (retryAttempt < (config.maxRetries || 3)) {
-        setTimeout(() => {
-          this.chargeRecurringPayment(
+      const updatedSubscription = await stripe.subscriptions.update(
+        subscriptionId,
+        {
+          items: [{ id: existingItem.id, price: newPrice.id }],
+          proration_behavior: "create_prorations",
+          metadata: {
             userId,
             plan,
-            amount,
-            currency,
             billingType,
-            retryAttempt + 1,
-            config,
-          );
-        }, config.retryDelayMs || 5000);
-      } else {
-        await this.suspendSubscription(userId);
-        throw error;
-      }
+            upgradedAt: new Date().toISOString(),
+          },
+        },
+      );
+      const currentPeriodEndUnix = (updatedSubscription as any)?.current_period_end;
+
+      return {
+        subscriptionId: updatedSubscription.id,
+        amount,
+        currency: inputCurrencyCode,
+        localAmount,
+        localCurrency: existingCurrencyCode,
+        plan,
+        billingType,
+        currentPeriodEnd: currentPeriodEndUnix
+          ? new Date(Number(currentPeriodEndUnix) * 1000)
+          : null,
+      };
+    } catch (error) {
+      console.error("❌ Error upgrading Stripe subscription plan:", error);
+      throw error;
     }
   }
+
+  /**
+   * Charge recurring payment using saved payment method
+   * Supports both monthly and yearly billing cycles
+   */
+  // static async chargeRecurringPayment(
+  //   userId: string,
+  //   plan: string,
+  //   amount: number, // in cents
+  //   currency: string,
+  //   billingType: "monthly" | "yearly" = "monthly",
+  //   retryAttempt = 0,
+  //   config = this.DEFAULT_RECURRING_CONFIG,
+  // ): Promise<void> {
+  //   try {
+  //     const user = await User.findById(userId);
+  //     if (!user || !user.plan) {
+  //       throw new Error(`User ${userId} not found or has no plan`);
+  //     }
+
+  //     const customerId = await this.getOrCreateCustomer(user);
+  //     const orderRef = `STR-REC-${Date.now()}`;
+
+  //     // Get default payment method
+  //     const paymentMethods = await this.stripe.paymentMethods.list({
+  //       customer: customerId,
+  //       type: "card",
+  //     });
+
+  //     if (paymentMethods.data.length === 0) {
+  //       throw new Error("No payment method on file");
+  //     }
+
+  //     const defaultPaymentMethod = paymentMethods.data[0];
+
+  //     // Create invoice for recurring charge
+  //     const paymentIntent = await this.stripe.paymentIntents.create({
+  //       customer: customerId,
+  //       amount: Math.round(amount * 100),
+  //       currency: currency.toLowerCase(),
+  //       payment_method: defaultPaymentMethod.id,
+  //       off_session: true,
+  //       confirm: true,
+  //       description: `Recurring charge for ${plan} (${billingType})`,
+  //       metadata: {
+  //         userId: userId,
+  //         plan,
+  //         billingType,
+  //         orderRef,
+  //         isRecurring: "true",
+  //       },
+  //     });
+
+  //     // Create payment record
+  //     const payment = await Payment.create({
+  //       userId,
+  //       orderRef,
+  //       reference: paymentIntent.id,
+  //       amount: amount / 100,
+  //       localAmount: amount / 100,
+  //       currency,
+  //       plan,
+  //       billingType,
+  //       status: "PENDING",
+  //       gateway: "stripe",
+  //       paymentIntentId: paymentIntent.id,
+  //       isRecurring: true,
+  //       recurringCycle: this.getMonthlyRecurringCycle(),
+  //       billingAttempt: retryAttempt + 1,
+  //       gatewayResponse: { paymentIntentId: paymentIntent.id },
+  //     });
+
+  //     // Verify payment after delay
+  //     setTimeout(() => {
+  //       this.verifyRecurringPayment(paymentIntent.id, userId, plan, billingType);
+  //     }, 3000);
+  //   } catch (error) {
+  //     console.error(
+  //       `❌ Recurring payment charge failed (Attempt ${retryAttempt + 1}):`,
+  //       error,
+  //     );
+
+  //     if (retryAttempt < (config.maxRetries || 3)) {
+  //       setTimeout(() => {
+  //         this.chargeRecurringPayment(
+  //           userId,
+  //           plan,
+  //           amount,
+  //           currency,
+  //           billingType,
+  //           retryAttempt + 1,
+  //           config,
+  //         );
+  //       }, config.retryDelayMs || 5000);
+  //     } else {
+  //       await this.suspendSubscription(userId);
+  //       throw error;
+  //     }
+  //   }
+  // }
 
   /**
    * Verify recurring payment result
@@ -800,12 +1416,11 @@ export class StripeService {
   /**
    * Initialize recurring payment cron job
    */
-  static initRecurringPaymentCron() {
-    // Run daily at 2 AM
-    cron.schedule("0 2 * * *", async () => {
-      await this.processRecurringPayments();
-    });
-  }
+  // static initRecurringPaymentCron() {
+  //   cron.schedule("0 2 * * *", async () => {
+  //     await this.processRecurringPayments();
+  //   });
+  // }
 
   /**
    * Process all Stripe recurring payments
@@ -824,13 +1439,13 @@ export class StripeService {
           const billingType = user.billingType || "monthly";
           const planAmount = this.getPlanAmount(user.plan as string);
           
-          await this.chargeRecurringPayment(
-            user._id.toString(),
-            user.plan as string,
-            planAmount,
-            "USD",
-            billingType as any,
-          );
+          // await this.chargeRecurringPayment(
+          //   user._id.toString(),
+          //   user.plan as string,
+          //   planAmount,
+          //   "USD",
+          //   billingType as any,
+          // );
         } catch (err) {
           console.error(`❌ Error charging user ${user._id}:`, err);
         }
@@ -917,6 +1532,23 @@ export class StripeService {
       await this.stripe.subscriptions.cancel(subscriptionId);
     } catch (error) {
       console.error(`❌ Error cancelling Stripe subscription:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Schedule subscription cancellation at period end
+   */
+  static async setSubscriptionCancelAtPeriodEnd(
+    subscriptionId: string,
+  ): Promise<void> {
+    try {
+      const stripe = this.getStripeClient();
+      await stripe.subscriptions.update(subscriptionId, {
+        cancel_at_period_end: true,
+      });
+    } catch (error) {
+      console.error(`❌ Error setting cancel_at_period_end:`, error);
       throw error;
     }
   }

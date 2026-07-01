@@ -11,6 +11,7 @@ build/
 .env.local
 .env.development
 .env.production
+SkyBorne-Backend/firebase-service-account.json
 
 # Logs
 logs/
@@ -18,6 +19,8 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+logs\\*.json
+logs\\*-audit.json
 
 # OS files
 .DS_Store

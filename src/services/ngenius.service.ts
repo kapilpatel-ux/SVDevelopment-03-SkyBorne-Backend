@@ -367,7 +367,8 @@ export class NgeniusService {
     userId: string,
     plan: string,
     userAmount: number,
-    source: "app" | "web" = "web"
+    source: "app" | "web" = "web",
+    billingType: "monthly" | "yearly" = "monthly",
   ) {
     try {
       if (!process.env.NGENIUS_OUTLET_ID) {
@@ -427,6 +428,7 @@ export class NgeniusService {
         localAmount: amount,
         currency,
         plan,
+        billingType,
         status: "PENDING",
         gateway: "ngenius",
         source: source,

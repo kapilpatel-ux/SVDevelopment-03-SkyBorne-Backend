@@ -23,6 +23,8 @@ export interface IUser extends Document {
   lastPaymentGateway?: "stripe" | "ngenius";
   password?: string;
   country: string;
+  state?: string;
+  city?: string;
   billingType?: string;
   countryCode: string;
   dialingCode: string;
@@ -56,7 +58,10 @@ export interface IUser extends Document {
   firstGoal?: string;
 
   // Step 7: Plan Selection
-  plan?: "gold-yoga" | "gold-zumba" | "gold-mixed" | "diamond" | "platinum";
+  plan?: string;
+  pendingPlan?: string | null;
+  pendingBillingType?: "monthly" | "yearly" | null;
+  pendingEffectiveDate?: Date | null;
 
   // Class Credits
   classCredits: {

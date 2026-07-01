@@ -17,13 +17,21 @@ function methodNotAllow(req: Request) {
 const publicApi = [
   "/about-us",
   "/services",
+  "/services/active",
   "/plans",
   "/testimonials",
   "/faq",
   "/consultation",
   "/news-letter",
   "/countries",
-  "/meetings/:id/recording"
+  "/products",
+  "/products/published",
+  "/products/category/:categoryId",
+  "/products/:productId",
+  "/meetings/:id/recording",
+  "/mail-management/error-log",
+  "/open/class/:meetingId",
+  "/payment/stripe-portal-return"
 ];
 
 appApiRoutes?.map(({ path, request, method, action,roles }: any) => {
